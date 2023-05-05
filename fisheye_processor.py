@@ -1,7 +1,7 @@
 """
 Fisheye Rewarp And Dewarp
 """
-
+import pickle
 import cv2
 import numpy as np
 from tqdm import tqdm
@@ -48,11 +48,20 @@ class FisheyeProcessor:
 
         self.__panorama_shape = None
 
-    def build_dewarp_mesh(self):
+    def build_dewarp_mesh(self, save_path=None):
         if self.use_multiprocessing:
             self.__dewarp_map_x, self.__dewarp_map_y = self.__build_dewarp_map_with_mp(self.img)
         else:
             self.__dewarp_map_x, self.__dewarp_map_y = self.__build_dewarp_map(self.img)
+        if save_path and isinstance(save_path, str):
+            with open(save_path, 'wb') as f:
+                pickle.dump((self.__dewarp_map_x, self.__dewarp_map_y), f)
+        return self.__dewarp_map_x, self.__dewarp_map_y
+
+    def load_dewarp_mesh(self, mesh_path:str):
+        with open(mesh_path, 'rb') as f:
+            self.__dewarp_map_x, self.__dewarp_map_y = pickle.load(f)
+        return self.__dewarp_map_x, self.__dewarp_map_y
 
     def run_dewarp(self, save_path=None):
         result = self.dewarp(self.img, flip=True)
@@ -63,11 +72,20 @@ class FisheyeProcessor:
             cv2.imwrite(save_path, result)
         return result
 
-    def build_rewarp_mesh(self):
+    def build_rewarp_mesh(self, save_path=None):
         if self.use_multiprocessing:
             self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask = self.__build_rewarp_map_with_mp()
         else:
             self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask = self.__build_rewarp_map()
+        if save_path and isinstance(save_path, str):
+            with open(save_path, 'wb') as f:
+                pickle.dump((self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask), f)
+        return self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask
+
+    def load_rewarp_mesh(self, mesh_path:str):
+        with open(mesh_path, 'rb') as f:
+            self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask = pickle.load(f)
+        return self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask
 
     def run_rewarp(self, save_path=None):
         dewarp_result = self.dewarp(self.img, flip=False)

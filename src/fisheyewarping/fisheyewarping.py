@@ -37,7 +37,7 @@ def angle_map(points):
         length_percentage = angle / (2 * np.pi)
     return point, length_percentage, distance
 
-class FisheyeProcessor:
+class FisheyeWarping:
 
     def __init__(self, img, use_multiprocessing=False):
         self.img = img

@@ -1,0 +1,10 @@
+
+.DS_Store
+
+desktop.ini
+
+__pycache__
+
+result/
+
+processedImg/

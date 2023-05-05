@@ -5,6 +5,5 @@ desktop.ini
 
 __pycache__
 
-result/
+*.npy
 
-processedImg/

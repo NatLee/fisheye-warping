@@ -58,18 +58,18 @@ class FisheyeWarping:
                 pickle.dump((self.__dewarp_map_x, self.__dewarp_map_y), f)
         print(f'Dewarp Map X shape -> {self.__dewarp_map_x.shape}')
         print(f'Dewarp Map Y shape -> {self.__dewarp_map_y.shape}')
-        return self.__dewarp_map_x, self.__dewarp_map_y
+        h, w = self.__dewarp_map_x.shape
+        self.__panorama_shape = (w, h)
+        return  self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y
 
     def load_dewarp_mesh(self, mesh_path:str):
         with open(mesh_path, 'rb') as f:
-            self.__dewarp_map_x, self.__dewarp_map_y = pickle.load(f)
-        return self.__dewarp_map_x, self.__dewarp_map_y
+             self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y = pickle.load(f)
+        return self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y
 
     def run_dewarp(self, save_path=None):
         result = self.dewarp(self.img, flip=True)
         print(f'Panorama shape is `{result.shape}`')
-        h, w, _ = result.shape
-        self.__panorama_shape = (w, h)
         if save_path and isinstance(save_path, str):
             cv2.imwrite(save_path, result)
         return result

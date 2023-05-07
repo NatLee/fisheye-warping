@@ -3,9 +3,9 @@
 # **Fisheye Warping**
 
 <p style="text-align: center">
-  <img align="center" src="./doc/101-panorama.jpg" alt="Panorama" width="70%" height="100%">
+  <img align="center" src="https://github.com/NatLee/fisheye-warping/raw/main/doc/101-panorama.jpg" alt="Panorama" width="70%" height="100%">
   <div></div>
-  <img align="center" src="./doc/101-fisheye.jpg" alt="Fisheye" width="40%" height="40%">
+  <img align="center" src="https://github.com/NatLee/fisheye-warping/raw/main/doc/101-fisheye.jpg" alt="Fisheye" width="40%" height="40%">
 </p>
 
 [![PyPI pyversions](https://img.shields.io/pypi/pyversions/FisheyeWarping.svg)](https://pypi.python.org/pypi/FisheyeWarping/) [![PyPI implementation](https://img.shields.io/pypi/implementation/FisheyeWarping.svg)](https://pypi.python.org/pypi/FisheyeWarping/)
@@ -29,6 +29,8 @@ A tool for dewarping and rewarping on a top-down fisheye image by using OpenCV o
 ```bash
 pip install FisheyeWarping
 ```
+
+Check it in [Pypi](https://pypi.org/project/FisheyeWarping/)
 
 ## Usage
 
@@ -151,13 +153,13 @@ Here is the mesh image for this tool, it shows the transformation from the origi
 - Before - **Fisheye**
 
 <div align="center" style="text-align: center">
-<img align="center" src="./doc/mesh-fisheye.jpg" alt="Fisheye" width="40%" height="40%">
+<img align="center" src="https://github.com/NatLee/fisheye-warping/raw/main/doc/mesh-fisheye.jpg" alt="Fisheye" width="40%" height="40%">
 </div>
 
 - After - **Panorama**
 
 <div align="center" style="text-align: center">
-<img align="center" src="./doc/mesh-panorama.jpg" alt="Panorama" width="70%" height="100%">
+<img align="center" src="https://github.com/NatLee/fisheye-warping/raw/main/doc/mesh-panorama.jpg" alt="Panorama" width="70%" height="100%">
 </div>
 
 

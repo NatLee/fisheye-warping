@@ -56,6 +56,8 @@ class FisheyeWarping:
         if save_path and isinstance(save_path, str):
             with open(save_path, 'wb') as f:
                 pickle.dump((self.__dewarp_map_x, self.__dewarp_map_y), f)
+        print(f'Dewarp Map X shape -> {self.__dewarp_map_x.shape}')
+        print(f'Dewarp Map Y shape -> {self.__dewarp_map_y.shape}')
         return self.__dewarp_map_x, self.__dewarp_map_y
 
     def load_dewarp_mesh(self, mesh_path:str):
@@ -80,6 +82,9 @@ class FisheyeWarping:
         if save_path and isinstance(save_path, str):
             with open(save_path, 'wb') as f:
                 pickle.dump((self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask), f)
+        print(f'Rewarp Map X shape -> {self.__rewarp_map_x.shape}')
+        print(f'Rewarp Map Y shape -> {self.__rewarp_map_y.shape}')
+        print(f'Rewarp Map MASK shape -> {self.__rewarp_mask.shape}')
         return self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask
 
     def load_rewarp_mesh(self, mesh_path:str):

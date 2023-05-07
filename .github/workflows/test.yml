@@ -63,6 +63,7 @@ jobs:
           run: |
               python -m pip install --upgrade pip
               pip install opencv-python==4.6.0.66
+              pip install tqdm
       -   name: Test with unittest
           run: |
               python setup.py test

@@ -1,5 +1,7 @@
 import setuptools
 
+REPO_URL = 'https://github.com/NatLee/fisheye-warping'
+
 with open('README.md', 'r', encoding='utf-8') as fh:
     long_description = fh.read()
 
@@ -11,11 +13,11 @@ setuptools.setup(
     keywords='dewarp, rewarp, panorama, fisheye, mesh, cli',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='https://github.com/NatLee/fisheye-warping',
+    url=REPO_URL,
     project_urls={
-        'Documentation': 'https://github.com/NatLee/fisheye-warping',
-        'Bug Reports': 'https://github.com/NatLee/fisheye-warping/issues',
-        'Source Code': 'https://github.com/NatLee/fisheye-warping'
+        'Documentation': REPO_URL,
+        'Bug Reports': REPO_URL + '/issues',
+        'Source Code': REPO_URL,
     },
     package_dir={'': 'src'},
     packages=setuptools.find_packages(where='src'),

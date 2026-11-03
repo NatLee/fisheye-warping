@@ -197,7 +197,7 @@ def _check_image_path(value: Optional[str], option: str) -> Optional[Path]:
     path = Path(value)
     print(f'----- `--{option}`: `{path}`')
     _check_file(path, option)
-    if path.suffix not in IMAGE_SUFFIXES:
+    if path.suffix.lower() not in IMAGE_SUFFIXES:
         raise _Stop(f'`--{option}` must be a .jpg, .jpeg or .png image; `{path.name}` ends in `{path.suffix}`.')
     return path
 

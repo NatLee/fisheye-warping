@@ -290,3 +290,10 @@ def test_errors_end_with_exit_code_1(workdir):
     assert proc.returncode == 1
     assert proc.stderr.strip().splitlines() == ['fisheyewarping: error: OpenCV cannot read `broken.png` as an image. '
                                                 'Is the file complete?']
+
+
+def test_upper_case_suffixes_are_accepted(workdir, monkeypatch, fisheye_img, inline_pool):
+    # Cameras often write .JPG; 1.0.x refused it
+    cv2.imwrite(str(workdir / 'CAMERA.JPG'), fisheye_img)
+    run_cli(monkeypatch, '--fisheye_img_path', './CAMERA.JPG', '--save_dewarp_mesh_path', './d.pkl')
+    assert (workdir / 'dewarp-output.png').is_file()

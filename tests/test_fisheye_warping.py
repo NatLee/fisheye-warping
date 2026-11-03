@@ -255,3 +255,30 @@ def test_failed_image_write_warns(fisheye_img, tmp_path):
     with pytest.warns(UserWarning, match='could not write'):
         result = frd.run_dewarp(save_path=str(tmp_path / 'no-such-folder' / 'panorama.png'))
     assert result.shape == (32, 100, 3)
+
+
+def test_paths_can_be_pathlib_paths(fisheye_img, panorama_img, tmp_path):
+    # 1.0.x silently saved nothing when save_path was a pathlib.Path
+    frd = FisheyeWarping(fisheye_img)
+    frd.build_dewarp_mesh(save_path=tmp_path / 'dewarp.pkl')
+    frd.build_rewarp_mesh(save_path=tmp_path / 'rewarp.pkl')
+    frd.run_dewarp(save_path=tmp_path / 'panorama.png')
+    frd.run_rewarp(save_path=tmp_path / 'round-trip.png')
+    frd.run_rewarp_with_mesh(panorama_img, save_path=tmp_path / 'fisheye.png')
+    for name in ('dewarp.pkl', 'rewarp.pkl', 'panorama.png', 'round-trip.png', 'fisheye.png'):
+        assert (tmp_path / name).is_file()
+
+    loaded = FisheyeWarping(None)
+    loaded.load_dewarp_mesh(mesh_path=tmp_path / 'dewarp.pkl')
+    loaded.load_rewarp_mesh(mesh_path=tmp_path / 'rewarp.pkl')
+    np.testing.assert_array_equal(loaded.run_rewarp_with_mesh(panorama_img),
+                                  cv2.imread(str(tmp_path / 'fisheye.png')))
+
+
+def test_no_save_path_saves_nothing(fisheye_img, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    frd = FisheyeWarping(fisheye_img)
+    frd.build_dewarp_mesh(save_path='')
+    frd.build_rewarp_mesh(save_path=None)
+    frd.run_dewarp(save_path='')
+    assert list(tmp_path.iterdir()) == []

@@ -6,6 +6,7 @@ Both directions use a *mesh*: for every output pixel it says which input pixel t
 again for any other image of the same size.
 """
 import multiprocessing as mp
+import os
 import pickle
 import time
 import warnings
@@ -17,6 +18,8 @@ from tqdm import tqdm
 
 #: ``(width, height)`` of the panorama, the order ``cv2.resize`` takes
 PanoramaShape = Tuple[int, int]
+#: A file path: ``str`` or ``pathlib.Path``
+PathLike = Union[str, os.PathLike]
 #: What ``build_dewarp_mesh`` returns and saves: ``(panorama shape, map x, map y)``
 DewarpMesh = Tuple[PanoramaShape, np.ndarray, np.ndarray]
 #: What ``build_rewarp_mesh`` returns and saves: ``(map x, map y, mask)``
@@ -168,24 +171,28 @@ def _rotate_180(img: np.ndarray) -> np.ndarray:
     return cv2.warpAffine(img, matrix, (w, h))
 
 
-def _wants_saving(save_path: Optional[str]) -> bool:
-    return bool(save_path) and isinstance(save_path, str)
+def _save_target(save_path: Optional[PathLike]) -> Optional[str]:
+    """The file to save to, or None to save nothing. None and '' save nothing, as in 1.0.x."""
+    if isinstance(save_path, os.PathLike):
+        save_path = os.fspath(save_path)
+    return save_path if isinstance(save_path, str) and save_path else None
 
 
-def _save_pickle(path: str, data: Any) -> None:
+def _save_pickle(path: PathLike, data: Any) -> None:
     with open(path, 'wb') as f:
         pickle.dump(data, f)
 
 
-def _load_pickle(path: str) -> Any:
+def _load_pickle(path: PathLike) -> Any:
     with open(path, 'rb') as f:
         return pickle.load(f)
 
 
-def _save_image(save_path: Optional[str], img: np.ndarray) -> None:
-    if _wants_saving(save_path) and not cv2.imwrite(save_path, img):
+def _save_image(save_path: Optional[PathLike], img: np.ndarray) -> None:
+    target = _save_target(save_path)
+    if target and not cv2.imwrite(target, img):
         # OpenCV only returns False, for example when the folder does not exist
-        warnings.warn(f'OpenCV could not write `{save_path}`. Does its folder exist?', stacklevel=3)
+        warnings.warn(f'OpenCV could not write `{target}`. Does its folder exist?', stacklevel=3)
 
 
 def _require_image(img: Optional[np.ndarray], needed_by: str) -> np.ndarray:
@@ -220,7 +227,7 @@ def _looks_like_rewarp_mesh(mesh: Any) -> bool:
             and mesh[0].shape == mesh[1].shape == mesh[2].shape)
 
 
-def _load_mesh(mesh_path: str, kind: str) -> Any:
+def _load_mesh(mesh_path: PathLike, kind: str) -> Any:
     """Read a pickled mesh and check that it is a ``kind`` ('dewarp' or 'rewarp') mesh."""
     mesh = _load_pickle(mesh_path)
     expected, other = ((_looks_like_dewarp_mesh, _looks_like_rewarp_mesh) if kind == 'dewarp'
@@ -255,7 +262,7 @@ class FisheyeWarping:
 
     # ---- dewarp: fisheye -> panorama ---------------------------------------------------
 
-    def build_dewarp_mesh(self, save_path: Optional[str] = None) -> DewarpMesh:
+    def build_dewarp_mesh(self, save_path: Optional[PathLike] = None) -> DewarpMesh:
         """Build the mesh that turns this fisheye image into a panorama; save it when ``save_path`` is given.
 
         Returns ``(panorama shape, map x, map y)``, where the panorama shape is ``(width, height)``.
@@ -265,13 +272,14 @@ class FisheyeWarping:
         rows, cols = self._dewarp_map_x.shape
         self._panorama_shape = (cols, rows)
         mesh = (self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y)
-        if _wants_saving(save_path):
-            _save_pickle(save_path, mesh)
+        target = _save_target(save_path)
+        if target:
+            _save_pickle(target, mesh)
         print(f'Dewarp Map X shape -> {self._dewarp_map_x.shape}')
         print(f'Dewarp Map Y shape -> {self._dewarp_map_y.shape}')
         return mesh
 
-    def load_dewarp_mesh(self, mesh_path: str) -> DewarpMesh:
+    def load_dewarp_mesh(self, mesh_path: PathLike) -> DewarpMesh:
         """Load a mesh saved by ``build_dewarp_mesh`` (also the 1.0.x format). Returns it like ``build_dewarp_mesh``.
 
         Raises ``ValueError`` when the file holds something else, such as a rewarp mesh.
@@ -286,7 +294,7 @@ class FisheyeWarping:
             self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y = mesh
         return self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y
 
-    def run_dewarp(self, save_path: Optional[str] = None) -> np.ndarray:
+    def run_dewarp(self, save_path: Optional[PathLike] = None) -> np.ndarray:
         """Dewarp this fisheye image into a panorama; save it when ``save_path`` is given."""
         self._require_dewarp_mesh()
         result = self.dewarp(self._require_fisheye('run_dewarp()'), flip=True)
@@ -304,7 +312,7 @@ class FisheyeWarping:
 
     # ---- rewarp: panorama -> fisheye ---------------------------------------------------
 
-    def build_rewarp_mesh(self, save_path: Optional[str] = None) -> RewarpMesh:
+    def build_rewarp_mesh(self, save_path: Optional[PathLike] = None) -> RewarpMesh:
         """Build the mesh that turns a panorama back into a fisheye image of this size; save it when ``save_path`` is given.
 
         Needs the dewarp mesh first (built or loaded). Returns ``(map x, map y, mask)``.
@@ -314,14 +322,15 @@ class FisheyeWarping:
         panorama_width = self._dewarp_map_x.shape[1]
         mesh = _build_rewarp_maps(img, panorama_width, self.use_multiprocessing)
         self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask = mesh
-        if _wants_saving(save_path):
-            _save_pickle(save_path, mesh)
+        target = _save_target(save_path)
+        if target:
+            _save_pickle(target, mesh)
         print(f'Rewarp Map X shape -> {self._rewarp_map_x.shape}')
         print(f'Rewarp Map Y shape -> {self._rewarp_map_y.shape}')
         print(f'Rewarp Map MASK shape -> {self._rewarp_mask.shape}')
         return mesh
 
-    def load_rewarp_mesh(self, mesh_path: str) -> RewarpMesh:
+    def load_rewarp_mesh(self, mesh_path: PathLike) -> RewarpMesh:
         """Load a mesh saved by ``build_rewarp_mesh``. Returns it like ``build_rewarp_mesh``.
 
         Raises ``ValueError`` when the file holds something else, such as a dewarp mesh.
@@ -329,7 +338,7 @@ class FisheyeWarping:
         self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask = _load_mesh(mesh_path, 'rewarp')
         return self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask
 
-    def run_rewarp(self, save_path: Optional[str] = None) -> np.ndarray:
+    def run_rewarp(self, save_path: Optional[PathLike] = None) -> np.ndarray:
         """Dewarp this fisheye image and rewarp the result: a round trip back to a fisheye image."""
         self._require_dewarp_mesh()
         dewarp_result = self.dewarp(self._require_fisheye('run_rewarp()'), flip=False)
@@ -338,7 +347,7 @@ class FisheyeWarping:
         _save_image(save_path, result)
         return result
 
-    def run_rewarp_with_mesh(self, panorama_img: np.ndarray, save_path: Optional[str] = None) -> np.ndarray:
+    def run_rewarp_with_mesh(self, panorama_img: np.ndarray, save_path: Optional[PathLike] = None) -> np.ndarray:
         """Rewarp any panorama into a fisheye image; save it when ``save_path`` is given.
 
         Needs both meshes: the dewarp mesh tells the panorama size, the rewarp mesh does the work.

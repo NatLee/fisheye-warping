@@ -53,18 +53,26 @@ class FisheyeWarping:
             self.__dewarp_map_x, self.__dewarp_map_y = self.__build_dewarp_map_with_mp(self.img)
         else:
             self.__dewarp_map_x, self.__dewarp_map_y = self.__build_dewarp_map(self.img)
-        if save_path and isinstance(save_path, str):
-            with open(save_path, 'wb') as f:
-                pickle.dump((self.__dewarp_map_x, self.__dewarp_map_y), f)
-        print(f'Dewarp Map X shape -> {self.__dewarp_map_x.shape}')
-        print(f'Dewarp Map Y shape -> {self.__dewarp_map_y.shape}')
         h, w = self.__dewarp_map_x.shape
         self.__panorama_shape = (w, h)
+        if save_path and isinstance(save_path, str):
+            with open(save_path, 'wb') as f:
+                # Same layout that `load_dewarp_mesh` reads: (panorama shape, map x, map y)
+                pickle.dump((self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y), f)
+        print(f'Dewarp Map X shape -> {self.__dewarp_map_x.shape}')
+        print(f'Dewarp Map Y shape -> {self.__dewarp_map_y.shape}')
         return  self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y
 
     def load_dewarp_mesh(self, mesh_path:str):
         with open(mesh_path, 'rb') as f:
-             self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y = pickle.load(f)
+            mesh = pickle.load(f)
+        if len(mesh) == 2:
+            # Files saved by version 1.0.x only hold (map x, map y)
+            self.__dewarp_map_x, self.__dewarp_map_y = mesh
+            h, w = self.__dewarp_map_x.shape
+            self.__panorama_shape = (w, h)
+        else:
+            self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y = mesh
         return self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y
 
     def run_dewarp(self, save_path=None):
@@ -148,8 +156,8 @@ class FisheyeWarping:
         for y in tqdm(range(0, int(h_d-1)), desc='Run dewarp job...'):
             for x in range(0, int(w_d-1)):
                 _, x_s, y_s = self._dewarp_map_job((y, x, img_details))
-                mapx.itemset((y, x), x_s)
-                mapy.itemset((y, x), y_s)
+                mapx[y, x] = x_s
+                mapy[y, x] = y_s
         return mapx, mapy
 
     def __build_dewarp_map_with_mp(self, img):
@@ -169,8 +177,8 @@ class FisheyeWarping:
         print('--------Mapping Completed-------- ({:0.3f} s)'.format(time.time() - st))
         for result in tqdm(results, desc='Mapping values to rectangle...'):
             point, x_s, y_s = result
-            mapx.itemset(point, x_s)
-            mapy.itemset(point, y_s)
+            mapx[point] = x_s
+            mapy[point] = y_s
         
         return mapx, mapy
 
@@ -221,9 +229,9 @@ class FisheyeWarping:
             if length_percentage is not None:
                 point = (y, x)
                 length = length_percentage * dewarp_result.shape[1]
-                xmap.itemset(point, length)
-                ymap.itemset(point, distance)
-                mask.itemset(point, 255)
+                xmap[point] = length
+                ymap[point] = distance
+                mask[point] = 255
         
         return xmap, ymap, mask
 
@@ -251,9 +259,9 @@ class FisheyeWarping:
             if length_percentage is not None:
                 point = (y, x)
                 length = length_percentage * dewarp_result.shape[1]
-                xmap.itemset(point, length)
-                ymap.itemset(point, distance)
-                mask.itemset(point, 255)
+                xmap[point] = length
+                ymap[point] = distance
+                mask[point] = 255
 
         return xmap, ymap, mask
 

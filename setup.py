@@ -19,12 +19,15 @@ setuptools.setup(
     },
     package_dir={'': 'src'},
     packages=setuptools.find_packages(where='src'),
+    package_data={'fisheyewarping': ['py.typed']},
     classifiers=[
         # see https://pypi.org/classifiers/
         'Development Status :: 5 - Production/Stable',
 
         'Intended Audience :: Developers',
-        'Topic :: Software Development :: Build Tools',
+        'Intended Audience :: Science/Research',
+        'Topic :: Multimedia :: Graphics :: Graphics Conversion',
+        'Topic :: Scientific/Engineering :: Image Processing',
 
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.6',
@@ -39,6 +42,7 @@ setuptools.setup(
         'Programming Language :: Python :: 3 :: Only',
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
+        'Typing :: Typed',
     ],
     python_requires='>=3.6',
     install_requires=[

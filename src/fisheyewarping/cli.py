@@ -113,7 +113,7 @@ def _run(args: argparse.Namespace) -> None:
         _fisheye_and_panorama(args, fisheye_path, panorama_path)
     elif fisheye_path:
         _fisheye_only(args, fisheye_path)
-    else:
+    elif panorama_path:
         _panorama_only(args, panorama_path)
     print('========End of this process========')
 

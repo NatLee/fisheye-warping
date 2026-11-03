@@ -39,6 +39,7 @@ class MeshNotReadyError(RuntimeError, AssertionError):
 
 def unit_vector(vector: Vector) -> np.ndarray:
     """Return ``vector`` scaled to length 1. A zero vector gives NaNs."""
+    vector = np.asarray(vector)
     norm = np.linalg.norm(vector)
     if norm == 0:
         # 0 / 0 is NaN on purpose. Silence that warning here only, not for the whole program.
@@ -304,8 +305,8 @@ class FisheyeWarping:
 
     def dewarp(self, img: np.ndarray, flip: bool = False) -> np.ndarray:
         """Apply the dewarp mesh to ``img``. ``flip`` turns the result upside down, as ``run_dewarp`` does."""
-        self._require_dewarp_mesh()
-        output = cv2.remap(_require_image(img, 'dewarp()'), self._dewarp_map_x, self._dewarp_map_y, cv2.INTER_LINEAR)
+        map_x, map_y = self._require_dewarp_mesh()
+        output = cv2.remap(_require_image(img, 'dewarp()'), map_x, map_y, cv2.INTER_LINEAR)
         if flip:
             output = _rotate_180(output)
         return output
@@ -318,16 +319,16 @@ class FisheyeWarping:
         Needs the dewarp mesh first (built or loaded). Returns ``(map x, map y, mask)``.
         """
         img = self._require_fisheye('build_rewarp_mesh()')
-        self._require_dewarp_mesh()
-        panorama_width = self._dewarp_map_x.shape[1]
+        dewarp_map_x, _ = self._require_dewarp_mesh()
+        panorama_width = dewarp_map_x.shape[1]
         mesh = _build_rewarp_maps(img, panorama_width, self.use_multiprocessing)
         self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask = mesh
         target = _save_target(save_path)
         if target:
             _save_pickle(target, mesh)
-        print(f'Rewarp Map X shape -> {self._rewarp_map_x.shape}')
-        print(f'Rewarp Map Y shape -> {self._rewarp_map_y.shape}')
-        print(f'Rewarp Map MASK shape -> {self._rewarp_mask.shape}')
+        print(f'Rewarp Map X shape -> {mesh[0].shape}')
+        print(f'Rewarp Map Y shape -> {mesh[1].shape}')
+        print(f'Rewarp Map MASK shape -> {mesh[2].shape}')
         return mesh
 
     def load_rewarp_mesh(self, mesh_path: PathLike) -> RewarpMesh:
@@ -371,15 +372,15 @@ class FisheyeWarping:
 
     def rewarp(self, panorama_img: np.ndarray, flip: bool = False) -> np.ndarray:
         """Apply the rewarp mesh to ``panorama_img``. ``flip`` turns the result upside down."""
-        self._require_rewarp_mesh()
+        map_x, map_y, mask = self._require_rewarp_mesh()
         panorama_img = _require_image(panorama_img, 'rewarp()')
-        canvas, right_output = self.half_rewarp_map(panorama_img, self._rewarp_map_x, self._rewarp_map_y)
+        canvas, right_output = self.half_rewarp_map(panorama_img, map_x, map_y)
         # The angle only covers half a turn, so the right half comes from the mirrored panorama.
         # 1.0.x splits at the middle row count, which is the middle column for square images.
         split = int(canvas.shape[0] / 2) + 1
         canvas[:, split:, :] = right_output[:, split:, :]
         # Black outside the circle
-        canvas = cv2.add(canvas, np.zeros(canvas.shape, dtype=np.uint8), mask=self._rewarp_mask)
+        canvas = cv2.add(canvas, np.zeros(canvas.shape, dtype=np.uint8), mask=mask)
         if flip:
             canvas = _rotate_180(canvas)
         return canvas
@@ -393,10 +394,12 @@ class FisheyeWarping:
                             'still load both meshes and call run_rewarp_with_mesh().')
         return self.img
 
-    def _require_dewarp_mesh(self) -> None:
+    def _require_dewarp_mesh(self) -> Tuple[np.ndarray, np.ndarray]:
         if self._dewarp_map_x is None or self._dewarp_map_y is None:
             raise MeshNotReadyError('There is no dewarp mesh yet: call build_dewarp_mesh() or load_dewarp_mesh() first.')
+        return self._dewarp_map_x, self._dewarp_map_y
 
-    def _require_rewarp_mesh(self) -> None:
+    def _require_rewarp_mesh(self) -> RewarpMesh:
         if self._rewarp_map_x is None or self._rewarp_map_y is None or self._rewarp_mask is None:
             raise MeshNotReadyError('There is no rewarp mesh yet: call build_rewarp_mesh() or load_rewarp_mesh() first.')
+        return self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask

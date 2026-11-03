@@ -185,9 +185,13 @@ What the command does depends on which images you give it:
 | `--use_multiprocessing True\|False` | Build meshes with one worker process per CPU core | `True` |
 
 The output format follows the file extension (anything OpenCV can write, such as `.png` or `.jpg`).
-When an input file or a mesh option is missing, the command says what to add and stops with exit
-code 0, as it always has. When a file is there but cannot be used, such as a broken image or swapped
-mesh files, it stops with exit code 1.
+The command checks the options first and the files second, and stops before writing anything
+when something is wrong. It exits with:
+
+- **0** when it worked;
+- **1** when a file is missing or cannot be used, such as a broken image or swapped mesh files;
+- **2** for wrong or missing options, such as a fisheye image without a mesh option. It prints the
+  usage line first, like any argparse error. (Up to 1.0.2, missing options ended with 0.)
 
 ## Python API reference
 

@@ -53,10 +53,12 @@ def test_panorama_only_without_dewarp_mesh_explains_what_is_missing(workdir, mon
             '--save_rewarp_mesh_path', './rewarp-mesh.pkl',
             '--fisheye_img_path', './fisheye.png')
     capsys.readouterr()
-    run_cli(monkeypatch,
-            '--load_rewarp_mesh_path', './rewarp-mesh.pkl',
-            '--panorama_img_path', './panorama.png')
-    assert 'load_dewarp_mesh_path' in capsys.readouterr().out
+    with pytest.raises(SystemExit) as stop:
+        run_cli(monkeypatch,
+                '--load_rewarp_mesh_path', './rewarp-mesh.pkl',
+                '--panorama_img_path', './panorama.png')
+    assert stop.value.code == 2  # a usage error
+    assert 'load_dewarp_mesh_path' in capsys.readouterr().err
     assert not (workdir / 'rewarp-output.png').exists()
 
 
@@ -170,57 +172,84 @@ def test_output_paths_can_be_changed(workdir, monkeypatch, inline_pool, fisheye_
     assert cv2.imread(str(workdir / 'my-fisheye.png')).shape == fisheye_img.shape
 
 
-# Each of these stops before writing anything and says what is wrong. The process still ends
-# with exit code 0, as in 1.0.x (whether it should be non-zero is an open decision).
-STOPS = {
+# The command checks the options first, then the files. Either way it stops before writing anything
+# and says what is wrong. Wrong or missing options are usage errors (exit code 2, after the usage
+# line, as argparse does); a file that is missing or cannot be used is a failure (exit code 1).
+USAGE_ERRORS = {
     'no input image': ([], ['fisheye_img_path', 'panorama_img_path']),
-    'fisheye image missing': (['--fisheye_img_path', './missing.png', '--save_dewarp_mesh_path', './d.pkl'],
-                              ['fisheye_img_path']),
-    'panorama image missing': (['--panorama_img_path', './missing.png', '--load_dewarp_mesh_path', './d.pkl'],
-                               ['panorama_img_path']),
-    'not an image suffix': (['--fisheye_img_path', './notes.txt', '--save_dewarp_mesh_path', './d.pkl'], ['.txt']),
     'no dewarp mesh option': (['--fisheye_img_path', './fisheye.png'],
                               ['load_dewarp_mesh_path', 'save_dewarp_mesh_path']),
+    'options are checked before files': (['--fisheye_img_path', './missing.png'], ['save_dewarp_mesh_path']),
+    'panorama without dewarp mesh': (['--panorama_img_path', './panorama.png', '--load_rewarp_mesh_path', './mesh/r.pkl'],
+                                     ['load_dewarp_mesh_path']),
+    'panorama without rewarp mesh': (['--panorama_img_path', './panorama.png', '--load_dewarp_mesh_path', './mesh/d.pkl'],
+                                     ['load_rewarp_mesh_path']),
+}
+FAILURES = {
+    'fisheye image missing': (['--fisheye_img_path', './missing.png', '--save_dewarp_mesh_path', './d.pkl'],
+                              ['fisheye_img_path', 'does not exist']),
+    'panorama image missing': (['--panorama_img_path', './missing.png', '--load_dewarp_mesh_path', './mesh/d.pkl',
+                                '--load_rewarp_mesh_path', './mesh/r.pkl'], ['panorama_img_path', 'does not exist']),
+    'not an image suffix': (['--fisheye_img_path', './notes.txt', '--save_dewarp_mesh_path', './d.pkl'], ['.txt']),
     'dewarp mesh to load is missing': (['--fisheye_img_path', './fisheye.png', '--load_dewarp_mesh_path', './nope.pkl'],
                                        ['does not exist']),
     'dewarp mesh to load is a folder': (['--fisheye_img_path', './fisheye.png', '--load_dewarp_mesh_path', '.'],
                                         ['not a file']),
     'dewarp mesh to save is a folder': (['--fisheye_img_path', './fisheye.png', '--save_dewarp_mesh_path', '.'],
                                         ['save_dewarp_mesh_path', 'directory']),
-    'panorama without rewarp mesh': (['--panorama_img_path', './panorama.png', '--load_dewarp_mesh_path', './mesh/d.pkl'],
-                                     ['load_rewarp_mesh_path']),
     'panorama with a missing rewarp mesh': (['--panorama_img_path', './panorama.png',
                                              '--load_dewarp_mesh_path', './mesh/d.pkl',
                                              '--load_rewarp_mesh_path', './nope.pkl'], ['does not exist']),
 }
+CASES = [(args, words, 2) for args, words in USAGE_ERRORS.values()] + [(args, words, 1) for args, words in FAILURES.values()]
 
 
-@pytest.mark.parametrize('args, expected', list(STOPS.values()), ids=list(STOPS))
-def test_stops_early_and_says_why(args, expected, workdir, monkeypatch, capsys, inline_pool):
+@pytest.mark.parametrize('args, expected, exit_code', CASES, ids=list(USAGE_ERRORS) + list(FAILURES))
+def test_stops_early_and_says_why(args, expected, exit_code, workdir, monkeypatch, capsys, inline_pool):
     (workdir / 'notes.txt').write_text('not an image')
     (workdir / 'mesh').mkdir()
     monkeypatch.chdir(workdir / 'mesh')
     build = ['--save_dewarp_mesh_path', './d.pkl', '--save_rewarp_mesh_path', './r.pkl',
-                            '--fisheye_img_path', '../fisheye.png', '--use_multiprocessing', 'False']
+             '--fisheye_img_path', '../fisheye.png', '--use_multiprocessing', 'False']
     run_cli(monkeypatch, *build)
     monkeypatch.chdir(workdir)
     capsys.readouterr()
     before = sorted(p.name for p in workdir.iterdir())
 
-    assert run_cli(monkeypatch, *args) is None  # returns normally: exit code 0
-    out = capsys.readouterr().out
+    with pytest.raises(SystemExit) as stop:
+        run_cli(monkeypatch, *args)
+
+    if exit_code == 2:  # argparse prints the usage and the message, and exits with 2
+        assert stop.value.code == 2
+        message = capsys.readouterr().err
+        assert message.startswith('usage: fisheyewarping ')
+    else:  # SystemExit with a message: Python prints it and exits with 1
+        message = str(stop.value.code)
+        assert message.startswith('fisheyewarping: error: ')
     for word in expected:
-        assert word in out
+        assert word in message
     assert sorted(p.name for p in workdir.iterdir()) == before  # nothing written
 
 
-def test_save_rewarp_mesh_path_that_is_a_folder_stops_after_dewarp(workdir, monkeypatch, capsys, inline_pool):
-    assert run_cli(monkeypatch,
-                   '--fisheye_img_path', './fisheye.png',
-                   '--save_dewarp_mesh_path', './d.pkl',
-                   '--save_rewarp_mesh_path', '.') is None
-    assert 'save_rewarp_mesh_path' in capsys.readouterr().out
+def test_save_rewarp_mesh_path_that_is_a_folder_fails_after_dewarp(workdir, monkeypatch, inline_pool):
+    with pytest.raises(SystemExit) as stop:
+        run_cli(monkeypatch,
+                '--fisheye_img_path', './fisheye.png',
+                '--save_dewarp_mesh_path', './d.pkl',
+                '--save_rewarp_mesh_path', '.')
+    assert 'save_rewarp_mesh_path' in str(stop.value.code)
     assert (workdir / 'd.pkl').is_file()
+
+
+@pytest.mark.parametrize('args, exit_code', [
+    ([], 2),
+    (['--fisheye_img_path', 'missing.png', '--save_dewarp_mesh_path', 'd.pkl'], 1),
+], ids=['usage error', 'failure'])
+def test_exit_codes_of_the_real_command(workdir, args, exit_code):
+    proc = subprocess.run([sys.executable, '-m', 'fisheyewarping', *args],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    assert proc.returncode == exit_code
+    assert 'fisheyewarping: error: ' in proc.stderr
 
 
 def test_options_and_defaults_are_unchanged():
@@ -252,14 +281,15 @@ def test_help_keeps_default_paths_on_one_line(columns, monkeypatch):
     assert './dewarp-output.png' in help_text and './rewarp-output.png' in help_text
 
 
-def test_help_and_errors_list_the_accepted_suffixes(workdir, monkeypatch, capsys):
+def test_help_and_errors_list_the_accepted_suffixes(workdir, monkeypatch):
     # One list of suffixes; the help and the error message are written from it
     accepted = ', '.join(cli.IMAGE_SUFFIXES[:-1]) + ' or ' + cli.IMAGE_SUFFIXES[-1]
     monkeypatch.setenv('COLUMNS', '200')  # one line per option help, so the phrase is not wrapped
     assert cli.build_parser().format_help().count(accepted) == 2
     (workdir / 'notes.txt').write_text('not an image')
-    run_cli(monkeypatch, '--fisheye_img_path', './notes.txt', '--save_dewarp_mesh_path', './d.pkl')
-    assert accepted in capsys.readouterr().out
+    with pytest.raises(SystemExit) as stop:
+        run_cli(monkeypatch, '--fisheye_img_path', './notes.txt', '--save_dewarp_mesh_path', './d.pkl')
+    assert accepted in str(stop.value.code)
 
 
 def test_main_takes_arguments_directly(workdir, inline_pool):

@@ -33,7 +33,7 @@ def test_fisheye_only_builds_both_meshes(workdir, monkeypatch):
     assert (workdir / 'dewarp-output.png').is_file()
 
 
-def test_panorama_only_rewarps_with_both_loaded_meshes(workdir, monkeypatch):
+def test_panorama_only_rewarps_with_both_loaded_meshes(workdir, monkeypatch, fisheye_img):
     run_cli(monkeypatch,
             '--save_dewarp_mesh_path', './dewarp-mesh.pkl',
             '--save_rewarp_mesh_path', './rewarp-mesh.pkl',
@@ -44,7 +44,7 @@ def test_panorama_only_rewarps_with_both_loaded_meshes(workdir, monkeypatch):
             '--load_rewarp_mesh_path', './rewarp-mesh.pkl',
             '--panorama_img_path', './panorama.png')
     output = cv2.imread(str(workdir / 'rewarp-output.png'))
-    assert output.shape == (64, 64, 3)
+    assert output.shape == fisheye_img.shape  # the size the meshes were built for
 
 
 def test_panorama_only_without_dewarp_mesh_explains_what_is_missing(workdir, monkeypatch, capsys):
@@ -154,7 +154,7 @@ def test_both_images_without_a_rewarp_mesh_only_dewarp(workdir, monkeypatch, inl
     assert not (workdir / 'rewarp-output.png').exists()
 
 
-def test_output_paths_can_be_changed(workdir, monkeypatch, inline_pool):
+def test_output_paths_can_be_changed(workdir, monkeypatch, inline_pool, fisheye_img):
     build_both_meshes(monkeypatch)
     run_cli(monkeypatch,
             '--load_dewarp_mesh_path', './dewarp-mesh.pkl',
@@ -165,8 +165,9 @@ def test_output_paths_can_be_changed(workdir, monkeypatch, inline_pool):
             '--load_rewarp_mesh_path', './rewarp-mesh.pkl',
             '--panorama_img_path', './panorama.png',
             '--fisheye_output', './my-fisheye.png')
+    # A 64 x 64 fisheye gives a 100 x 32 panorama (see test_build_dewarp_mesh)
     assert cv2.imread(str(workdir / 'my-panorama.jpg')).shape == (32, 100, 3)
-    assert cv2.imread(str(workdir / 'my-fisheye.png')).shape == (64, 64, 3)
+    assert cv2.imread(str(workdir / 'my-fisheye.png')).shape == fisheye_img.shape
 
 
 # Each of these stops before writing anything and says what is wrong. The process still ends
@@ -241,6 +242,24 @@ def test_options_and_defaults_are_unchanged():
                    '--load_dewarp_mesh_path', '--load_rewarp_mesh_path', '--panorama_output', '--fisheye_output',
                    '--use_multiprocessing', 'examples:'):
         assert option in help_text
+
+
+@pytest.mark.parametrize('columns', range(55, 241, 3))
+def test_help_keeps_default_paths_on_one_line(columns, monkeypatch):
+    # argparse wraps help to the terminal width (COLUMNS) and may break words at hyphens
+    monkeypatch.setenv('COLUMNS', str(columns))
+    help_text = cli.build_parser().format_help()
+    assert './dewarp-output.png' in help_text and './rewarp-output.png' in help_text
+
+
+def test_help_and_errors_list_the_accepted_suffixes(workdir, monkeypatch, capsys):
+    # One list of suffixes; the help and the error message are written from it
+    accepted = ', '.join(cli.IMAGE_SUFFIXES[:-1]) + ' or ' + cli.IMAGE_SUFFIXES[-1]
+    monkeypatch.setenv('COLUMNS', '200')  # one line per option help, so the phrase is not wrapped
+    assert cli.build_parser().format_help().count(accepted) == 2
+    (workdir / 'notes.txt').write_text('not an image')
+    run_cli(monkeypatch, '--fisheye_img_path', './notes.txt', '--save_dewarp_mesh_path', './d.pkl')
+    assert accepted in capsys.readouterr().out
 
 
 def test_main_takes_arguments_directly(workdir, inline_pool):

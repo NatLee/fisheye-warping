@@ -11,23 +11,27 @@ import pytest
 from fisheyewarping import FisheyeWarping, MeshNotReadyError
 from fisheyewarping.fisheyewarping import angle_between, angle_map, unit_vector
 
+# The 64 x 64 `fisheye_img` fixture has radius 32, so its panorama is int(2 * pi * 16) = 100 pixels
+# wide (the circle at half the radius) and 32 high (the radius)
+PANORAMA_W, PANORAMA_H = 100, 32
+FISHEYE_HW = (64, 64)
+
 
 def test_create_obj():
     FisheyeWarping(None, use_multiprocessing=True)
 
 
 def test_build_dewarp_mesh(fisheye_img):
-    # 64x64 image -> radius 32 -> panorama width int(2 * 16 * pi) = 100, height 32
     panorama_shape, map_x, map_y = FisheyeWarping(fisheye_img).build_dewarp_mesh()
-    assert panorama_shape == (100, 32)
-    assert map_x.shape == map_y.shape == (32, 100)
+    assert panorama_shape == (PANORAMA_W, PANORAMA_H)
+    assert map_x.shape == map_y.shape == (PANORAMA_H, PANORAMA_W)
     assert map_x.max() > 0 and map_y.max() > 0
 
 
 def test_run_dewarp_gives_panorama(fisheye_img):
     frd = FisheyeWarping(fisheye_img)
     frd.build_dewarp_mesh()
-    assert frd.run_dewarp().shape == (32, 100, 3)
+    assert frd.run_dewarp().shape == (PANORAMA_H, PANORAMA_W, 3)
 
 
 def test_multiprocessing_builds_the_same_meshes(fisheye_img):
@@ -45,7 +49,7 @@ def test_build_rewarp_mesh_and_rewarp_panorama(fisheye_img, panorama_img):
     frd = FisheyeWarping(fisheye_img)
     frd.build_dewarp_mesh()
     map_x, map_y, mask = frd.build_rewarp_mesh()
-    assert map_x.shape == map_y.shape == mask.shape == (64, 64)
+    assert map_x.shape == map_y.shape == mask.shape == FISHEYE_HW
     assert mask[32, 32] == 255 and mask[0, 0] == 0  # inside vs. outside the circle
     result = frd.run_rewarp_with_mesh(panorama_img, save_path=None)
     assert result.shape == fisheye_img.shape
@@ -58,7 +62,7 @@ def test_saved_dewarp_mesh_can_be_loaded(fisheye_img, tmp_path):
 
     loader = FisheyeWarping(fisheye_img)
     loaded = loader.load_dewarp_mesh(mesh_path=mesh)
-    assert loaded[0] == built[0] == (100, 32)
+    assert loaded[0] == built[0] == (PANORAMA_W, PANORAMA_H)
     np.testing.assert_array_equal(loader.run_dewarp(), builder.run_dewarp())
 
 
@@ -69,7 +73,7 @@ def test_load_dewarp_mesh_saved_by_version_1_0_x(fisheye_img, tmp_path):
     mesh.write_bytes(pickle.dumps((map_x, map_y)))
 
     panorama_shape, _, _ = FisheyeWarping(fisheye_img).load_dewarp_mesh(mesh_path=str(mesh))
-    assert panorama_shape == (100, 32)
+    assert panorama_shape == (PANORAMA_W, PANORAMA_H)
 
 
 def test_rewarp_panorama_with_loaded_meshes_only(fisheye_img, panorama_img, tmp_path):
@@ -107,7 +111,7 @@ def test_dewarp_works_on_grayscale_images(fisheye_img):
     gray = fisheye_img[..., 1].copy()
     frd = FisheyeWarping(gray)
     frd.build_dewarp_mesh()
-    assert frd.run_dewarp().shape == (32, 100)
+    assert frd.run_dewarp().shape == (PANORAMA_H, PANORAMA_W)
 
 
 def test_run_dewarp_and_run_rewarp_save_images(fisheye_img, tmp_path):
@@ -179,7 +183,35 @@ def test_rewarp_mesh_can_be_built_from_a_grayscale_fisheye(fisheye_img, panorama
     frd = FisheyeWarping(fisheye_img[..., 1].copy())
     frd.build_dewarp_mesh()
     frd.build_rewarp_mesh()
-    assert frd.run_rewarp_with_mesh(panorama_img).shape == (64, 64, 3)
+    assert frd.run_rewarp_with_mesh(panorama_img).shape == fisheye_img.shape
+
+
+def test_grayscale_fisheye_round_trip(fisheye_img):
+    # Dewarping always handled grayscale images; rewarping used to index three channels and crash
+    gray = fisheye_img[..., 1].copy()
+    frd = FisheyeWarping(gray)
+    frd.build_dewarp_mesh()
+    frd.build_rewarp_mesh()
+    result = frd.run_rewarp()
+    assert result.shape == gray.shape and result.dtype == gray.dtype
+
+    # Each channel is warped on its own, so a grayscale image gives the same pixels as that channel
+    colour = FisheyeWarping(fisheye_img)
+    colour.build_dewarp_mesh()
+    colour.build_rewarp_mesh()
+    np.testing.assert_array_equal(result, colour.run_rewarp()[..., 1])
+
+
+def test_rewarp_keeps_16_bit_images(fisheye_img, panorama_img):
+    # The circle mask used to be applied with an 8-bit array, which OpenCV refuses for 16-bit images
+    frd = FisheyeWarping(fisheye_img)
+    frd.build_dewarp_mesh()
+    _, _, mask = frd.build_rewarp_mesh()
+    deep = panorama_img.astype(np.uint16) * 257  # 8-bit values stretched to the 16-bit range
+    result = frd.rewarp(deep)
+    assert result.dtype == np.uint16 and result.shape == fisheye_img.shape
+    assert (result[mask == 0] == 0).all()  # black outside the circle
+    assert result[mask > 0].max() > 255  # the 16-bit range survives
 
 
 def test_docstring_examples():
@@ -254,7 +286,7 @@ def test_failed_image_write_warns(fisheye_img, tmp_path):
     frd.build_dewarp_mesh()
     with pytest.warns(UserWarning, match='could not write'):
         result = frd.run_dewarp(save_path=str(tmp_path / 'no-such-folder' / 'panorama.png'))
-    assert result.shape == (32, 100, 3)
+    assert result.shape == (PANORAMA_H, PANORAMA_W, 3)
 
 
 def test_paths_can_be_pathlib_paths(fisheye_img, panorama_img, tmp_path):

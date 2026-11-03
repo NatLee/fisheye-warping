@@ -53,7 +53,7 @@ gives a 1608 × 512 panorama.
 
 ```math
 \varphi = \frac{2\pi u}{W}, \qquad r = R - v, \qquad
-P(u, v) = F\big(\lfloor c - r\sin\varphi \rfloor,\ \lfloor c + r\cos\varphi \rfloor\big)
+P(u, v) = F\big(\lfloor c - r\,\sin\varphi \rfloor,\ \lfloor c + r\,\cos\varphi \rfloor\big)
 ```
 
 **Rewarp** runs the same map backwards. Each fisheye pixel inside the circle works out its distance
@@ -62,7 +62,7 @@ outside the circle stay black.
 
 ```math
 r = \sqrt{(x - c)^2 + (y - c)^2}, \qquad
-\psi = \operatorname{atan2}(c - x,\ y - c) \bmod 2\pi, \qquad
+\psi = \mathrm{atan2}(c - x,\ y - c) \bmod 2\pi, \qquad
 F(x, y) = P\Big(\frac{W\psi}{2\pi},\ R - r\Big) \quad \text{for } r \le R
 ```
 

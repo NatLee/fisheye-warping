@@ -297,3 +297,13 @@ def test_upper_case_suffixes_are_accepted(workdir, monkeypatch, fisheye_img, inl
     cv2.imwrite(str(workdir / 'CAMERA.JPG'), fisheye_img)
     run_cli(monkeypatch, '--fisheye_img_path', './CAMERA.JPG', '--save_dewarp_mesh_path', './d.pkl')
     assert (workdir / 'dewarp-output.png').is_file()
+
+
+def test_runs_as_python_m_fisheyewarping(workdir):
+    # Uses real worker processes; on Windows and macOS they re-import the main module
+    proc = subprocess.run([sys.executable, '-m', 'fisheyewarping', '--fisheye_img_path', 'fisheye.png',
+                           '--save_dewarp_mesh_path', 'd.pkl', '--save_rewarp_mesh_path', 'r.pkl'],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    assert proc.returncode == 0, proc.stderr
+    for name in ('d.pkl', 'r.pkl', 'dewarp-output.png'):
+        assert (workdir / name).is_file()

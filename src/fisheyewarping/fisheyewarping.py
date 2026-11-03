@@ -53,18 +53,26 @@ class FisheyeWarping:
             self.__dewarp_map_x, self.__dewarp_map_y = self.__build_dewarp_map_with_mp(self.img)
         else:
             self.__dewarp_map_x, self.__dewarp_map_y = self.__build_dewarp_map(self.img)
-        if save_path and isinstance(save_path, str):
-            with open(save_path, 'wb') as f:
-                pickle.dump((self.__dewarp_map_x, self.__dewarp_map_y), f)
-        print(f'Dewarp Map X shape -> {self.__dewarp_map_x.shape}')
-        print(f'Dewarp Map Y shape -> {self.__dewarp_map_y.shape}')
         h, w = self.__dewarp_map_x.shape
         self.__panorama_shape = (w, h)
+        if save_path and isinstance(save_path, str):
+            with open(save_path, 'wb') as f:
+                # Same layout that `load_dewarp_mesh` reads: (panorama shape, map x, map y)
+                pickle.dump((self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y), f)
+        print(f'Dewarp Map X shape -> {self.__dewarp_map_x.shape}')
+        print(f'Dewarp Map Y shape -> {self.__dewarp_map_y.shape}')
         return  self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y
 
     def load_dewarp_mesh(self, mesh_path:str):
         with open(mesh_path, 'rb') as f:
-             self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y = pickle.load(f)
+            mesh = pickle.load(f)
+        if len(mesh) == 2:
+            # Files saved by version 1.0.x only hold (map x, map y)
+            self.__dewarp_map_x, self.__dewarp_map_y = mesh
+            h, w = self.__dewarp_map_x.shape
+            self.__panorama_shape = (w, h)
+        else:
+            self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y = mesh
         return self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y
 
     def run_dewarp(self, save_path=None):

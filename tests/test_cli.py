@@ -1,3 +1,4 @@
+import subprocess
 import sys
 
 import cv2
@@ -255,3 +256,37 @@ def test_both_images_without_a_rewarp_mesh_says_so(workdir, monkeypatch, capsys,
             '--fisheye_img_path', './fisheye.png',
             '--panorama_img_path', './panorama.png')
     assert 'not rewarped' in capsys.readouterr().out
+
+
+# Where 1.0.x crashed with a traceback (exit code 1), the command now ends with one clear line
+# and still exits with 1: SystemExit with a message makes Python print it and exit with 1.
+
+def test_unreadable_image_fails_with_a_clear_message(workdir, monkeypatch):
+    (workdir / 'broken.png').write_bytes(b'not really a png')
+    with pytest.raises(SystemExit) as stop:
+        run_cli(monkeypatch, '--fisheye_img_path', './broken.png', '--save_dewarp_mesh_path', './d.pkl')
+    assert 'cannot read `broken.png` as an image' in str(stop.value.code)
+    assert not (workdir / 'd.pkl').exists()
+
+
+def test_swapped_meshes_fail_with_a_clear_message(workdir, monkeypatch, inline_pool):
+    build_both_meshes(monkeypatch)
+    with pytest.raises(SystemExit) as stop:
+        run_cli(monkeypatch,
+                '--load_dewarp_mesh_path', './rewarp-mesh.pkl',
+                '--load_rewarp_mesh_path', './dewarp-mesh.pkl',
+                '--panorama_img_path', './panorama.png')
+    assert '--load_dewarp_mesh_path' in str(stop.value.code)
+    assert 'swapped' in str(stop.value.code)
+    assert not (workdir / 'rewarp-output.png').exists()
+
+
+def test_errors_end_with_exit_code_1(workdir):
+    (workdir / 'broken.png').write_bytes(b'not really a png')
+    code = 'from fisheyewarping.cli import main; main()'
+    proc = subprocess.run([sys.executable, '-c', code, '--fisheye_img_path', 'broken.png',
+                           '--save_dewarp_mesh_path', 'd.pkl'],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    assert proc.returncode == 1
+    assert proc.stderr.strip().splitlines() == ['fisheyewarping: error: OpenCV cannot read `broken.png` as an image. '
+                                                'Is the file complete?']

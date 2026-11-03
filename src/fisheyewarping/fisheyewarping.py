@@ -8,6 +8,7 @@ again for any other image of the same size.
 import multiprocessing as mp
 import pickle
 import time
+import warnings
 from typing import Any, Callable, Iterable, NamedTuple, Optional, Sequence, Tuple, Union
 
 import cv2
@@ -23,6 +24,14 @@ RewarpMesh = Tuple[np.ndarray, np.ndarray, np.ndarray]
 
 Vector = Union[Sequence[float], np.ndarray]
 Point = Tuple[int, int]
+
+
+class MeshNotReadyError(RuntimeError, AssertionError):
+    """A mesh is needed but has not been built or loaded yet.
+
+    It is also an ``AssertionError``, which is what version 1.0.x raised here, so code that
+    catches that keeps working. Unlike an ``assert``, it is still raised under ``python -O``.
+    """
 
 
 def unit_vector(vector: Vector) -> np.ndarray:
@@ -174,8 +183,55 @@ def _load_pickle(path: str) -> Any:
 
 
 def _save_image(save_path: Optional[str], img: np.ndarray) -> None:
-    if _wants_saving(save_path):
-        cv2.imwrite(save_path, img)
+    if _wants_saving(save_path) and not cv2.imwrite(save_path, img):
+        # OpenCV only returns False, for example when the folder does not exist
+        warnings.warn(f'OpenCV could not write `{save_path}`. Does its folder exist?', stacklevel=3)
+
+
+def _require_image(img: Optional[np.ndarray], needed_by: str) -> np.ndarray:
+    if img is None:
+        raise TypeError(f'{needed_by} needs an image but got None. '
+                        '(cv2.imread returns None when it cannot read a file.)')
+    return img
+
+
+def _is_map(value: Any) -> bool:
+    return isinstance(value, np.ndarray) and value.ndim == 2
+
+
+def _is_size(value: Any) -> bool:
+    return (isinstance(value, (tuple, list)) and len(value) == 2
+            and all(isinstance(v, (int, np.integer)) for v in value))
+
+
+def _looks_like_dewarp_mesh(mesh: Any) -> bool:
+    """``(panorama shape, map x, map y)``, or ``(map x, map y)`` as saved by 1.0.x."""
+    if not isinstance(mesh, (tuple, list)):
+        return False
+    if len(mesh) == 2:
+        return _is_map(mesh[0]) and _is_map(mesh[1]) and mesh[0].shape == mesh[1].shape
+    return (len(mesh) == 3 and _is_size(mesh[0]) and _is_map(mesh[1]) and _is_map(mesh[2])
+            and mesh[1].shape == mesh[2].shape)
+
+
+def _looks_like_rewarp_mesh(mesh: Any) -> bool:
+    """``(map x, map y, mask)``"""
+    return (isinstance(mesh, (tuple, list)) and len(mesh) == 3 and all(_is_map(m) for m in mesh)
+            and mesh[0].shape == mesh[1].shape == mesh[2].shape)
+
+
+def _load_mesh(mesh_path: str, kind: str) -> Any:
+    """Read a pickled mesh and check that it is a ``kind`` ('dewarp' or 'rewarp') mesh."""
+    mesh = _load_pickle(mesh_path)
+    expected, other = ((_looks_like_dewarp_mesh, _looks_like_rewarp_mesh) if kind == 'dewarp'
+                       else (_looks_like_rewarp_mesh, _looks_like_dewarp_mesh))
+    if expected(mesh):
+        return mesh
+    if other(mesh):
+        swapped = 'rewarp' if kind == 'dewarp' else 'dewarp'
+        raise ValueError(f'`{mesh_path}` holds a {swapped} mesh, not a {kind} mesh. '
+                         'Are the dewarp and rewarp mesh files swapped?')
+    raise ValueError(f'`{mesh_path}` is not a {kind} mesh saved by FisheyeWarping.')
 
 
 class FisheyeWarping:
@@ -204,7 +260,8 @@ class FisheyeWarping:
 
         Returns ``(panorama shape, map x, map y)``, where the panorama shape is ``(width, height)``.
         """
-        self._dewarp_map_x, self._dewarp_map_y = _build_dewarp_maps(self.img, self.use_multiprocessing)
+        img = self._require_fisheye('build_dewarp_mesh()')
+        self._dewarp_map_x, self._dewarp_map_y = _build_dewarp_maps(img, self.use_multiprocessing)
         rows, cols = self._dewarp_map_x.shape
         self._panorama_shape = (cols, rows)
         mesh = (self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y)
@@ -215,8 +272,11 @@ class FisheyeWarping:
         return mesh
 
     def load_dewarp_mesh(self, mesh_path: str) -> DewarpMesh:
-        """Load a mesh saved by ``build_dewarp_mesh`` (also the 1.0.x format). Returns it like ``build_dewarp_mesh``."""
-        mesh = _load_pickle(mesh_path)
+        """Load a mesh saved by ``build_dewarp_mesh`` (also the 1.0.x format). Returns it like ``build_dewarp_mesh``.
+
+        Raises ``ValueError`` when the file holds something else, such as a rewarp mesh.
+        """
+        mesh = _load_mesh(mesh_path, 'dewarp')
         if len(mesh) == 2:
             # Files saved by version 1.0.x only hold (map x, map y)
             self._dewarp_map_x, self._dewarp_map_y = mesh
@@ -228,7 +288,8 @@ class FisheyeWarping:
 
     def run_dewarp(self, save_path: Optional[str] = None) -> np.ndarray:
         """Dewarp this fisheye image into a panorama; save it when ``save_path`` is given."""
-        result = self.dewarp(self.img, flip=True)
+        self._require_dewarp_mesh()
+        result = self.dewarp(self._require_fisheye('run_dewarp()'), flip=True)
         print(f'Panorama shape is `{result.shape}`')
         _save_image(save_path, result)
         return result
@@ -236,7 +297,7 @@ class FisheyeWarping:
     def dewarp(self, img: np.ndarray, flip: bool = False) -> np.ndarray:
         """Apply the dewarp mesh to ``img``. ``flip`` turns the result upside down, as ``run_dewarp`` does."""
         self._require_dewarp_mesh()
-        output = cv2.remap(img, self._dewarp_map_x, self._dewarp_map_y, cv2.INTER_LINEAR)
+        output = cv2.remap(_require_image(img, 'dewarp()'), self._dewarp_map_x, self._dewarp_map_y, cv2.INTER_LINEAR)
         if flip:
             output = _rotate_180(output)
         return output
@@ -248,9 +309,10 @@ class FisheyeWarping:
 
         Needs the dewarp mesh first (built or loaded). Returns ``(map x, map y, mask)``.
         """
+        img = self._require_fisheye('build_rewarp_mesh()')
         self._require_dewarp_mesh()
         panorama_width = self._dewarp_map_x.shape[1]
-        mesh = _build_rewarp_maps(self.img, panorama_width, self.use_multiprocessing)
+        mesh = _build_rewarp_maps(img, panorama_width, self.use_multiprocessing)
         self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask = mesh
         if _wants_saving(save_path):
             _save_pickle(save_path, mesh)
@@ -260,13 +322,17 @@ class FisheyeWarping:
         return mesh
 
     def load_rewarp_mesh(self, mesh_path: str) -> RewarpMesh:
-        """Load a mesh saved by ``build_rewarp_mesh``. Returns it like ``build_rewarp_mesh``."""
-        self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask = _load_pickle(mesh_path)
+        """Load a mesh saved by ``build_rewarp_mesh``. Returns it like ``build_rewarp_mesh``.
+
+        Raises ``ValueError`` when the file holds something else, such as a dewarp mesh.
+        """
+        self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask = _load_mesh(mesh_path, 'rewarp')
         return self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask
 
     def run_rewarp(self, save_path: Optional[str] = None) -> np.ndarray:
         """Dewarp this fisheye image and rewarp the result: a round trip back to a fisheye image."""
-        dewarp_result = self.dewarp(self.img, flip=False)
+        self._require_dewarp_mesh()
+        dewarp_result = self.dewarp(self._require_fisheye('run_rewarp()'), flip=False)
         result = self.rewarp(dewarp_result, flip=True)
         print(f'Fisheye image shape is `{result.shape}`')
         _save_image(save_path, result)
@@ -278,9 +344,10 @@ class FisheyeWarping:
         Needs both meshes: the dewarp mesh tells the panorama size, the rewarp mesh does the work.
         The panorama is resized to the size the meshes were built for.
         """
-        assert self._panorama_shape is not None, \
-            "Rewarp needs the shape of panorama generated from `run_dewarp`. Please run it first."
-        panorama_img = cv2.resize(panorama_img, self._panorama_shape)
+        if self._panorama_shape is None:
+            raise MeshNotReadyError('Rewarping a panorama needs the panorama size from the dewarp mesh: '
+                                    'call build_dewarp_mesh() or load_dewarp_mesh() first.')
+        panorama_img = cv2.resize(_require_image(panorama_img, 'run_rewarp_with_mesh()'), self._panorama_shape)
         panorama_img = _rotate_180(panorama_img)
         result = self.rewarp(panorama_img, flip=True)
         print(f'Fisheye image shape is `{result.shape}`')
@@ -296,6 +363,7 @@ class FisheyeWarping:
     def rewarp(self, panorama_img: np.ndarray, flip: bool = False) -> np.ndarray:
         """Apply the rewarp mesh to ``panorama_img``. ``flip`` turns the result upside down."""
         self._require_rewarp_mesh()
+        panorama_img = _require_image(panorama_img, 'rewarp()')
         canvas, right_output = self.half_rewarp_map(panorama_img, self._rewarp_map_x, self._rewarp_map_y)
         # The angle only covers half a turn, so the right half comes from the mirrored panorama.
         # 1.0.x splits at the middle row count, which is the middle column for square images.
@@ -309,10 +377,17 @@ class FisheyeWarping:
 
     # ---- checks ---------------------------------------------------------------------------
 
+    def _require_fisheye(self, needed_by: str) -> np.ndarray:
+        if self.img is None:
+            raise TypeError(f'{needed_by} needs the fisheye image, but FisheyeWarping got None. '
+                            '(cv2.imread returns None when it cannot read a file.) Without an image you can '
+                            'still load both meshes and call run_rewarp_with_mesh().')
+        return self.img
+
     def _require_dewarp_mesh(self) -> None:
-        assert self._dewarp_map_x is not None and self._dewarp_map_y is not None, \
-            "Dewarp mesh have not been created! Please run `build_dewarp_mesh` first."
+        if self._dewarp_map_x is None or self._dewarp_map_y is None:
+            raise MeshNotReadyError('There is no dewarp mesh yet: call build_dewarp_mesh() or load_dewarp_mesh() first.')
 
     def _require_rewarp_mesh(self) -> None:
-        assert self._rewarp_map_x is not None and self._rewarp_map_y is not None and self._rewarp_mask is not None, \
-            "Rewarp mesh have not been created! Please run `build_rewarp_mesh` first."
+        if self._rewarp_map_x is None or self._rewarp_map_y is None or self._rewarp_mask is None:
+            raise MeshNotReadyError('There is no rewarp mesh yet: call build_rewarp_mesh() or load_rewarp_mesh() first.')

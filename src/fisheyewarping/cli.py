@@ -1,5 +1,6 @@
 """The ``fisheyewarping`` command."""
 import argparse
+import pickle
 import textwrap
 import time
 from pathlib import Path
@@ -201,14 +202,25 @@ def _check_image_path(value: Optional[str], option: str) -> Optional[Path]:
     return path
 
 
+def _failure(message: str) -> SystemExit:
+    """Exit code 1 with a message. Used where 1.0.x crashed with a traceback, which also ended with 1."""
+    return SystemExit(f'fisheyewarping: error: {message}')
+
+
 def _read_image(path: Path) -> np.ndarray:
-    return cv2.imread(path.as_posix())
+    img = cv2.imread(path.as_posix())
+    if img is None:
+        raise _failure(f'OpenCV cannot read `{path}` as an image. Is the file complete?')
+    return img
 
 
 def _load_mesh(load: Callable[..., object], value: str, option: str) -> None:
     print(f'----- Load the mesh in `--{option}`: `{value}`')
     _check_file(Path(value), option)
-    load(mesh_path=value)
+    try:
+        load(mesh_path=value)
+    except (ValueError, EOFError, pickle.UnpicklingError) as exc:
+        raise _failure(f'`--{option}`: {exc}') from exc
 
 
 def _build_mesh(build: Callable[..., object], value: str, option: str) -> None:

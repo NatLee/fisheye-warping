@@ -1,12 +1,14 @@
 import doctest
 import pickle
+import subprocess
+import sys
 import warnings
 
 import cv2
 import numpy as np
 import pytest
 
-from fisheyewarping import FisheyeWarping
+from fisheyewarping import FisheyeWarping, MeshNotReadyError
 from fisheyewarping.fisheyewarping import angle_between, angle_map, unit_vector
 
 
@@ -184,3 +186,72 @@ def test_docstring_examples():
     from fisheyewarping import fisheyewarping as core
     result = doctest.testmod(core)
     assert result.attempted > 0 and result.failed == 0
+
+
+def test_missing_mesh_error_says_what_to_call(fisheye_img, panorama_img):
+    with pytest.raises(MeshNotReadyError, match=r'build_dewarp_mesh\(\) or load_dewarp_mesh\(\)'):
+        FisheyeWarping(fisheye_img).run_dewarp()
+    with pytest.raises(MeshNotReadyError, match=r'build_rewarp_mesh\(\) or load_rewarp_mesh\(\)'):
+        FisheyeWarping(fisheye_img).rewarp(panorama_img)
+    assert issubclass(MeshNotReadyError, AssertionError) and issubclass(MeshNotReadyError, RuntimeError)
+
+
+def test_missing_mesh_is_reported_under_python_O():
+    # 1.0.x used assert, which python -O removes; then OpenCV failed with a confusing message
+    code = ('import numpy as np\n'
+            'from fisheyewarping import FisheyeWarping\n'
+            'FisheyeWarping(np.zeros((8, 8, 3), np.uint8)).run_dewarp()')
+    proc = subprocess.run([sys.executable, '-O', '-c', code], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          universal_newlines=True)
+    assert proc.returncode != 0
+    assert 'MeshNotReadyError' in proc.stderr
+
+
+@pytest.mark.parametrize('call', [
+    lambda frd, mesh: frd.build_dewarp_mesh(),
+    lambda frd, mesh: (frd.load_dewarp_mesh(mesh_path=mesh), frd.run_dewarp()),
+    lambda frd, mesh: (frd.load_dewarp_mesh(mesh_path=mesh), frd.build_rewarp_mesh()),
+    lambda frd, mesh: (frd.load_dewarp_mesh(mesh_path=mesh), frd.run_rewarp_with_mesh(None)),
+], ids=['build_dewarp_mesh', 'run_dewarp', 'build_rewarp_mesh', 'run_rewarp_with_mesh'])
+def test_missing_image_explains_cv2_imread(call, fisheye_img, tmp_path):
+    mesh = str(tmp_path / 'dewarp.pkl')
+    FisheyeWarping(fisheye_img).build_dewarp_mesh(save_path=mesh)
+    with pytest.raises(TypeError, match='cv2.imread returns None'):
+        call(FisheyeWarping(None), mesh)
+
+
+@pytest.fixture
+def saved_meshes(fisheye_img, tmp_path):
+    frd = FisheyeWarping(fisheye_img)
+    dewarp, rewarp = str(tmp_path / 'dewarp.pkl'), str(tmp_path / 'rewarp.pkl')
+    _, map_x, map_y = frd.build_dewarp_mesh(save_path=dewarp)
+    frd.build_rewarp_mesh(save_path=rewarp)
+    old_dewarp = tmp_path / 'old-dewarp.pkl'
+    old_dewarp.write_bytes(pickle.dumps((map_x, map_y)))
+    not_a_mesh = tmp_path / 'not-a-mesh.pkl'
+    not_a_mesh.write_bytes(pickle.dumps({'hello': 'world'}))
+    return {'dewarp': dewarp, 'rewarp': rewarp, 'old dewarp': str(old_dewarp), 'not a mesh': str(not_a_mesh)}
+
+
+def test_swapped_mesh_files_are_named_as_such(saved_meshes):
+    # With OpenCV 5, a rewarp mesh loaded as a dewarp mesh used to give a garbage image without any error
+    with pytest.raises(ValueError, match='holds a rewarp mesh, not a dewarp mesh.*swapped'):
+        FisheyeWarping(None).load_dewarp_mesh(mesh_path=saved_meshes['rewarp'])
+    for name in ('dewarp', 'old dewarp'):
+        with pytest.raises(ValueError, match='holds a dewarp mesh, not a rewarp mesh.*swapped'):
+            FisheyeWarping(None).load_rewarp_mesh(mesh_path=saved_meshes[name])
+
+
+def test_other_pickles_are_not_meshes(saved_meshes):
+    with pytest.raises(ValueError, match='not a dewarp mesh saved by FisheyeWarping'):
+        FisheyeWarping(None).load_dewarp_mesh(mesh_path=saved_meshes['not a mesh'])
+    with pytest.raises(ValueError, match='not a rewarp mesh saved by FisheyeWarping'):
+        FisheyeWarping(None).load_rewarp_mesh(mesh_path=saved_meshes['not a mesh'])
+
+
+def test_failed_image_write_warns(fisheye_img, tmp_path):
+    frd = FisheyeWarping(fisheye_img)
+    frd.build_dewarp_mesh()
+    with pytest.warns(UserWarning, match='could not write'):
+        result = frd.run_dewarp(save_path=str(tmp_path / 'no-such-folder' / 'panorama.png'))
+    assert result.shape == (32, 100, 3)

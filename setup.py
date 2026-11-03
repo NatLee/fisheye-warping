@@ -46,7 +46,8 @@ setuptools.setup(
     ],
     python_requires='>=3.6',
     install_requires=[
-        # OpenCV 4.7+ has no wheels for Python 3.6, so pip would try to compile it from source and fail
+        # OpenCV 4.7+ has no wheels for Python 3.6, so pip would try to compile it from source and fail.
+        # Remove this line together with Python 3.6 support.
         'opencv-python<4.7; python_version < "3.7"',
         'opencv-python; python_version >= "3.7"',
         'numpy',

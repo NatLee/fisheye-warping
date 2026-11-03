@@ -10,7 +10,7 @@ import os
 import pickle
 import time
 import warnings
-from typing import Any, Callable, Iterable, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Sequence, Tuple, Union
 
 import cv2
 import numpy as np
@@ -34,6 +34,7 @@ class MeshNotReadyError(RuntimeError, AssertionError):
 
     It is also an ``AssertionError``, which is what version 1.0.x raised here, so code that
     catches that keeps working. Unlike an ``assert``, it is still raised under ``python -O``.
+    The ``AssertionError`` base can go in a major release, once callers catch this class instead.
     """
 
 
@@ -128,6 +129,12 @@ def _run_jobs(func: Callable[[Any], Any], jobs: Iterable[Any], use_multiprocessi
     return results
 
 
+def _panorama_shape_of(map_x: np.ndarray) -> PanoramaShape:
+    """``(width, height)`` of the panorama that a dewarp map produces: the size of the map."""
+    rows, cols = map_x.shape[:2]
+    return cols, rows
+
+
 def _build_dewarp_maps(img: np.ndarray, use_multiprocessing: bool) -> Tuple[np.ndarray, np.ndarray]:
     geometry = _panorama_geometry(img.shape)
     map_x = np.zeros((geometry.height, geometry.width), np.float32)
@@ -141,16 +148,32 @@ def _build_dewarp_maps(img: np.ndarray, use_multiprocessing: bool) -> Tuple[np.n
     return map_x, map_y
 
 
+# Where a rewarped image puts the circle, see `_rewarp_circle`
+_Circle = NamedTuple('_Circle', [
+    ('center', np.ndarray), ('top_point', np.ndarray), ('radius', float), ('split_column', int),
+])
+
+
+def _rewarp_circle(rows: int, cols: int) -> _Circle:
+    """The circle of a rewarped image, and the column where its mirrored right half starts.
+
+    Kept from 1.0.x so that no output changes: it builds the centre ``(x, y)`` from
+    ``(rows, cols)``, takes half the height as the radius and splits the halves at the middle
+    row count. That is right for square images only; other sizes come out off-centre (README,
+    "Limitations"). Fixing non-square images means changing this one function, and the 1.0.x
+    reference in tests/test_reference_geometry.py with it.
+    """
+    center = np.asarray([int(rows / 2), int(cols / 2)])
+    top_point = np.asarray([int(rows / 2), 0])
+    return _Circle(center, top_point, rows / 2, int(rows / 2) + 1)
+
+
 def _build_rewarp_maps(img: np.ndarray, panorama_width: int, use_multiprocessing: bool) -> RewarpMesh:
     rows, cols = img.shape[:2]
     map_x = np.zeros((rows, cols), dtype=np.float32)
     map_y = np.zeros((rows, cols), dtype=np.float32)
     mask = np.zeros((rows, cols), dtype=np.uint8)
-    # 1.0.x builds the centre (x, y) from (rows, cols) and takes half the height as the radius.
-    # That is only right for square images; kept as it is so that no output changes.
-    center = np.asarray([int(rows / 2), int(cols / 2)])
-    top_point = np.asarray([int(rows / 2), 0])
-    radius = rows / 2
+    center, top_point, radius, _ = _rewarp_circle(rows, cols)
     jobs = (((x, y), center, top_point, radius)
             for y in tqdm(range(rows), desc='Building rewarp mesh') for x in range(cols))
     for (x, y), share, distance in _run_jobs(angle_map, jobs, use_multiprocessing, 'rewarping'):
@@ -212,33 +235,44 @@ def _is_size(value: Any) -> bool:
             and all(isinstance(v, (int, np.integer)) for v in value))
 
 
-def _looks_like_dewarp_mesh(mesh: Any) -> bool:
-    """``(panorama shape, map x, map y)``, or ``(map x, map y)`` as saved by 1.0.x."""
-    if not isinstance(mesh, (tuple, list)):
-        return False
-    if len(mesh) == 2:
-        return _is_map(mesh[0]) and _is_map(mesh[1]) and mesh[0].shape == mesh[1].shape
-    return (len(mesh) == 3 and _is_size(mesh[0]) and _is_map(mesh[1]) and _is_map(mesh[2])
-            and mesh[1].shape == mesh[2].shape)
+def _same_size_maps(maps: Sequence[Any]) -> bool:
+    return all(_is_map(m) for m in maps) and len({m.shape for m in maps}) == 1
 
 
-def _looks_like_rewarp_mesh(mesh: Any) -> bool:
-    """``(map x, map y, mask)``"""
-    return (isinstance(mesh, (tuple, list)) and len(mesh) == 3 and all(_is_map(m) for m in mesh)
-            and mesh[0].shape == mesh[1].shape == mesh[2].shape)
+def _as_dewarp_mesh(data: Any) -> Optional[DewarpMesh]:
+    """``data`` unpickled from a file, as a dewarp mesh; None when it is not one."""
+    if not isinstance(data, (tuple, list)):
+        return None
+    if len(data) == 3 and _is_size(data[0]) and _same_size_maps(data[1:]):
+        return data[0], data[1], data[2]
+    if len(data) == 2 and _same_size_maps(data):
+        # 1.0.x saved only (map x, map y). Read so that those files keep working; this branch
+        # can go in a major release that no longer loads 1.0.x mesh files.
+        return _panorama_shape_of(data[0]), data[0], data[1]
+    return None
+
+
+def _as_rewarp_mesh(data: Any) -> Optional[RewarpMesh]:
+    """``data`` unpickled from a file, as a rewarp mesh; None when it is not one."""
+    if isinstance(data, (tuple, list)) and len(data) == 3 and _same_size_maps(data):
+        return data[0], data[1], data[2]
+    return None
+
+
+#: How to read each kind of mesh file
+_MESH_READERS: Dict[str, Callable[[Any], Any]] = {'dewarp': _as_dewarp_mesh, 'rewarp': _as_rewarp_mesh}
 
 
 def _load_mesh(mesh_path: PathLike, kind: str) -> Any:
-    """Read a pickled mesh and check that it is a ``kind`` ('dewarp' or 'rewarp') mesh."""
-    mesh = _load_pickle(mesh_path)
-    expected, other = ((_looks_like_dewarp_mesh, _looks_like_rewarp_mesh) if kind == 'dewarp'
-                       else (_looks_like_rewarp_mesh, _looks_like_dewarp_mesh))
-    if expected(mesh):
+    """Read a pickled mesh of ``kind``, a key of ``_MESH_READERS``. Says so when the file holds another kind."""
+    data = _load_pickle(mesh_path)
+    mesh = _MESH_READERS[kind](data)
+    if mesh is not None:
         return mesh
-    if other(mesh):
-        swapped = 'rewarp' if kind == 'dewarp' else 'dewarp'
-        raise ValueError(f'`{mesh_path}` holds a {swapped} mesh, not a {kind} mesh. '
-                         'Are the dewarp and rewarp mesh files swapped?')
+    for other, read in _MESH_READERS.items():
+        if other != kind and read(data) is not None:
+            raise ValueError(f'`{mesh_path}` holds a {other} mesh, not a {kind} mesh. '
+                             'Are the dewarp and rewarp mesh files swapped?')
     raise ValueError(f'`{mesh_path}` is not a {kind} mesh saved by FisheyeWarping.')
 
 
@@ -270,8 +304,7 @@ class FisheyeWarping:
         """
         img = self._require_fisheye('build_dewarp_mesh()')
         self._dewarp_map_x, self._dewarp_map_y = _build_dewarp_maps(img, self.use_multiprocessing)
-        rows, cols = self._dewarp_map_x.shape
-        self._panorama_shape = (cols, rows)
+        self._panorama_shape = _panorama_shape_of(self._dewarp_map_x)
         mesh = (self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y)
         target = _save_target(save_path)
         if target:
@@ -285,14 +318,7 @@ class FisheyeWarping:
 
         Raises ``ValueError`` when the file holds something else, such as a rewarp mesh.
         """
-        mesh = _load_mesh(mesh_path, 'dewarp')
-        if len(mesh) == 2:
-            # Files saved by version 1.0.x only hold (map x, map y)
-            self._dewarp_map_x, self._dewarp_map_y = mesh
-            rows, cols = self._dewarp_map_x.shape
-            self._panorama_shape = (cols, rows)
-        else:
-            self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y = mesh
+        self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y = _load_mesh(mesh_path, 'dewarp')
         return self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y
 
     def run_dewarp(self, save_path: Optional[PathLike] = None) -> np.ndarray:
@@ -376,9 +402,8 @@ class FisheyeWarping:
         panorama_img = _require_image(panorama_img, 'rewarp()')
         canvas, right_output = self.half_rewarp_map(panorama_img, map_x, map_y)
         # The angle only covers half a turn, so the right half comes from the mirrored panorama.
-        # 1.0.x splits at the middle row count, which is the middle column for square images.
-        split = int(canvas.shape[0] / 2) + 1
-        # Column slices and a 2-D mask work for any number of channels and any pixel type
+        # Column slices and a 2-D mask work for any number of channels and any pixel type.
+        split = _rewarp_circle(*mask.shape[:2]).split_column
         canvas[:, split:] = right_output[:, split:]
         canvas[mask == 0] = 0  # black outside the circle
         if flip:

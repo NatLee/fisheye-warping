@@ -36,7 +36,11 @@ class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
 
 
 class _Stop(Exception):
-    """Ends the run after printing why. The exit code stays 0, as in 1.0.x."""
+    """Ends the run after printing why. The exit code stays 0, as in 1.0.x.
+
+    Whether these cases should exit with 1 is an open decision. Changing it is a change here and
+    in the ``STOPS`` cases of tests/test_cli.py, which pin the current behaviour.
+    """
 
 
 def str2bool(value: str) -> bool:

@@ -182,6 +182,34 @@ def test_rewarp_mesh_can_be_built_from_a_grayscale_fisheye(fisheye_img, panorama
     assert frd.run_rewarp_with_mesh(panorama_img).shape == (64, 64, 3)
 
 
+def test_grayscale_fisheye_round_trip(fisheye_img):
+    # Dewarping always handled grayscale images; rewarping used to index three channels and crash
+    gray = fisheye_img[..., 1].copy()
+    frd = FisheyeWarping(gray)
+    frd.build_dewarp_mesh()
+    frd.build_rewarp_mesh()
+    result = frd.run_rewarp()
+    assert result.shape == gray.shape and result.dtype == gray.dtype
+
+    # Each channel is warped on its own, so a grayscale image gives the same pixels as that channel
+    colour = FisheyeWarping(fisheye_img)
+    colour.build_dewarp_mesh()
+    colour.build_rewarp_mesh()
+    np.testing.assert_array_equal(result, colour.run_rewarp()[..., 1])
+
+
+def test_rewarp_keeps_16_bit_images(fisheye_img, panorama_img):
+    # The circle mask used to be applied with an 8-bit array, which OpenCV refuses for 16-bit images
+    frd = FisheyeWarping(fisheye_img)
+    frd.build_dewarp_mesh()
+    _, _, mask = frd.build_rewarp_mesh()
+    deep = panorama_img.astype(np.uint16) * 257  # 8-bit values stretched to the 16-bit range
+    result = frd.rewarp(deep)
+    assert result.dtype == np.uint16 and result.shape == fisheye_img.shape
+    assert (result[mask == 0] == 0).all()  # black outside the circle
+    assert result[mask > 0].max() > 255  # the 16-bit range survives
+
+
 def test_docstring_examples():
     from fisheyewarping import fisheyewarping as core
     result = doctest.testmod(core)

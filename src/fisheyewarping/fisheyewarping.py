@@ -378,9 +378,9 @@ class FisheyeWarping:
         # The angle only covers half a turn, so the right half comes from the mirrored panorama.
         # 1.0.x splits at the middle row count, which is the middle column for square images.
         split = int(canvas.shape[0] / 2) + 1
-        canvas[:, split:, :] = right_output[:, split:, :]
-        # Black outside the circle
-        canvas = cv2.add(canvas, np.zeros(canvas.shape, dtype=np.uint8), mask=mask)
+        # Column slices and a 2-D mask work for any number of channels and any pixel type
+        canvas[:, split:] = right_output[:, split:]
+        canvas[mask == 0] = 0  # black outside the circle
         if flip:
             canvas = _rotate_180(canvas)
         return canvas

@@ -46,7 +46,7 @@ setuptools.setup(
     ],
     python_requires='>=3.8',  # Python 3.6 and 3.7 users get 1.0.2, the last release for them
     install_requires=[
-        'opencv-python',
+        'opencv-python-headless',  # the same cv2 without the window functions, which this tool never uses
         'numpy',
         'tqdm',
     ],

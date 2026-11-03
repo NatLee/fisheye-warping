@@ -81,19 +81,33 @@ turns images by 180° and mirrors the panorama for the left half of the circle. 
 pip install FisheyeWarping
 ```
 
-Python 3.8 or newer. This also installs OpenCV (`opencv-python`), NumPy and tqdm. On Python 3.6
-and 3.7, `pip install FisheyeWarping` picks 1.0.2 by itself, the last release that supports them.
+Python 3.8 or newer. This also installs OpenCV, NumPy and tqdm. On Python 3.6 and 3.7,
+`pip install FisheyeWarping` picks 1.0.2 by itself, the last release that supports them.
 
 > **Getting `AttributeError: ... has no attribute 'itemset'`?** That's version 1.0.1, which crashes with
 > NumPy 2. Upgrade: `pip install -U FisheyeWarping` (1.0.2 or newer).
 
-**Slim Docker images and servers without a desktop.** `opencv-python` needs two system libraries that
-slim images leave out; without them `import cv2` fails with `libxcb.so.1` or `libgthread-2.0.so.0`
-missing. On Debian-based images such as `python:3.12-slim`:
+OpenCV comes as its headless build, `opencv-python-headless`: the same `cv2` module without the
+window functions such as `cv2.imshow`, which this tool never uses. It needs no extra system
+libraries, so it works as it is on servers and in slim Docker images such as `python:3.12-slim`.
+
+**Already have `opencv-python`?** All OpenCV packages install the same `cv2` folder, and OpenCV's
+advice is to keep exactly one of them in an environment; two of different versions can break
+`import cv2`. If `pip list` shows more than one `opencv-` package, pick one:
 
 ```bash
-apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0
+# You don't need OpenCV windows: keep the headless build
+pip uninstall -y opencv-python opencv-python-headless
+pip install opencv-python-headless
+
+# You need cv2.imshow and friends: keep opencv-python, and stop pip from adding the headless build
+pip uninstall -y opencv-python opencv-python-headless
+pip install opencv-python
+pip install --no-deps --force-reinstall FisheyeWarping
 ```
+
+With the second way, `pip check` reports that `opencv-python-headless` is missing; that is
+expected. Use `--no-deps` again when you upgrade FisheyeWarping.
 
 ## Quick start
 

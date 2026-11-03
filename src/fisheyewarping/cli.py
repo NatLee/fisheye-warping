@@ -237,6 +237,7 @@ def main():
     elif args.panorama_img_path:
         print('----- Use `Rewarp` method to rewarp an image from a panorama image to fisheye image.')
 
+        load_dewarp_mesh_path = args.load_dewarp_mesh_path
         load_rewarp_mesh_path = args.load_rewarp_mesh_path
         save_rewarp_mesh_path = args.save_rewarp_mesh_path
 
@@ -245,6 +246,16 @@ def main():
         frd = FisheyeWarping(None, use_multiprocessing=use_multiprocessing)
         panorama_img = cv2.imread(panorama_img_path.as_posix())
         # =====================================
+
+        # Rewarping needs the panorama shape, which is stored in the dewarp mesh
+        if not load_dewarp_mesh_path:
+            print('----- You must specify a path to `load_dewarp_mesh_path` and `load_rewarp_mesh_path`!')
+            return
+        print(f'----- Detect `load_dewarp_mesh_path` is {load_dewarp_mesh_path}')
+        if not Path(load_dewarp_mesh_path).is_file():
+            print('----- Your input path of the dewarp mesh does not exists or is not a file!')
+            return
+        frd.load_dewarp_mesh(mesh_path=load_dewarp_mesh_path)
 
         if load_rewarp_mesh_path:
             print(f'----- Detect `load_rewarp_mesh_path` is {load_rewarp_mesh_path}')

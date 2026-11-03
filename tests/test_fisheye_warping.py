@@ -1,3 +1,4 @@
+import doctest
 import pickle
 import warnings
 
@@ -161,3 +162,25 @@ def test_angle_map_gives_the_share_of_a_turn_from_the_top():
     assert share == pytest.approx(0.5)  # straight down: half a turn
     _, share, distance = angle_map(((0, 0), center, top, 10))
     assert share is None and distance > 10  # outside the circle
+
+
+def test_building_meshes_leaves_numpy_warning_settings_alone(fisheye_img):
+    # 1.0.x switched off NumPy's "invalid value" warnings for the whole program
+    with np.errstate(invalid='warn'):
+        frd = FisheyeWarping(fisheye_img)
+        frd.build_dewarp_mesh()
+        frd.build_rewarp_mesh()
+        assert np.geterr()['invalid'] == 'warn'
+
+
+def test_rewarp_mesh_can_be_built_from_a_grayscale_fisheye(fisheye_img, panorama_img):
+    frd = FisheyeWarping(fisheye_img[..., 1].copy())
+    frd.build_dewarp_mesh()
+    frd.build_rewarp_mesh()
+    assert frd.run_rewarp_with_mesh(panorama_img).shape == (64, 64, 3)
+
+
+def test_docstring_examples():
+    from fisheyewarping import fisheyewarping as core
+    result = doctest.testmod(core)
+    assert result.attempted > 0 and result.failed == 0

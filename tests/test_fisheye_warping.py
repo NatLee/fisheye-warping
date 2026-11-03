@@ -1,8 +1,12 @@
 import pickle
+import warnings
 
+import cv2
 import numpy as np
+import pytest
 
 from fisheyewarping import FisheyeWarping
+from fisheyewarping.fisheyewarping import angle_between, angle_map, unit_vector
 
 
 def test_create_obj():
@@ -79,3 +83,81 @@ def test_rewarp_panorama_with_loaded_meshes_only(fisheye_img, panorama_img, tmp_
     output = str(tmp_path / 'rewarp-output.png')
     np.testing.assert_array_equal(frd.run_rewarp_with_mesh(panorama_img, save_path=output), expected)
     assert (tmp_path / 'rewarp-output.png').is_file()
+
+
+def test_run_rewarp_round_trip_restores_the_fisheye(fisheye_img):
+    frd = FisheyeWarping(fisheye_img)
+    frd.build_dewarp_mesh()
+    frd.build_rewarp_mesh()
+    result = frd.run_rewarp()
+    assert result.shape == fisheye_img.shape
+
+    yy, xx = np.mgrid[0:64, 0:64]
+    radius = np.hypot(xx - 32, yy - 32)
+    inside = (radius >= 4) & (radius < 28)
+    error = np.abs(result.astype(int) - fisheye_img.astype(int))[inside]
+    assert np.median(error) <= 5  # fisheye -> panorama -> fisheye comes back close to the input
+    assert (result[radius > 33] == 0).all()  # outside the circle stays black
+
+
+def test_dewarp_works_on_grayscale_images(fisheye_img):
+    gray = fisheye_img[..., 1].copy()
+    frd = FisheyeWarping(gray)
+    frd.build_dewarp_mesh()
+    assert frd.run_dewarp().shape == (32, 100)
+
+
+def test_run_dewarp_and_run_rewarp_save_images(fisheye_img, tmp_path):
+    frd = FisheyeWarping(fisheye_img)
+    frd.build_dewarp_mesh()
+    frd.build_rewarp_mesh()
+    panorama = frd.run_dewarp(save_path=str(tmp_path / 'panorama.png'))
+    fisheye = frd.run_rewarp(save_path=str(tmp_path / 'fisheye.png'))
+    np.testing.assert_array_equal(cv2.imread(str(tmp_path / 'panorama.png')), panorama)
+    np.testing.assert_array_equal(cv2.imread(str(tmp_path / 'fisheye.png')), fisheye)
+
+
+def test_saved_rewarp_mesh_round_trips(fisheye_img, tmp_path):
+    mesh = str(tmp_path / 'rewarp-mesh.pkl')
+    builder = FisheyeWarping(fisheye_img)
+    builder.build_dewarp_mesh()
+    built = builder.build_rewarp_mesh(save_path=mesh)
+    loaded = FisheyeWarping(None).load_rewarp_mesh(mesh_path=mesh)
+    for a, b in zip(built, loaded):
+        np.testing.assert_array_equal(a, b)
+
+
+@pytest.mark.parametrize('call', [
+    lambda frd, pano: frd.dewarp(pano),
+    lambda frd, pano: frd.run_dewarp(),
+    lambda frd, pano: frd.rewarp(pano),
+    lambda frd, pano: frd.run_rewarp_with_mesh(pano, save_path=None),
+    lambda frd, pano: frd.build_rewarp_mesh(),
+], ids=['dewarp', 'run_dewarp', 'rewarp', 'run_rewarp_with_mesh', 'build_rewarp_mesh'])
+def test_using_a_mesh_before_it_exists_raises_assertion_error(call, fisheye_img, panorama_img):
+    # 1.0.x raised AssertionError here; code catching it must keep working
+    with pytest.raises(AssertionError):
+        call(FisheyeWarping(fisheye_img), panorama_img)
+
+
+def test_angle_helpers():
+    assert angle_between((1, 0, 0), (0, 1, 0)) == pytest.approx(np.pi / 2)
+    assert angle_between((1, 0, 0), (1, 0, 0)) == pytest.approx(0)
+    assert angle_between((1, 0, 0), (-1, 0, 0)) == pytest.approx(np.pi)
+    np.testing.assert_allclose(unit_vector(np.asarray([3, 4])), [0.6, 0.8])
+
+
+def test_zero_vector_gives_nan_without_a_warning():
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        assert np.isnan(unit_vector(np.asarray([0, 0]))).all()
+
+
+def test_angle_map_gives_the_share_of_a_turn_from_the_top():
+    center, top = np.asarray([10, 10]), np.asarray([10, 0])
+    point, share, distance = angle_map(((10, 4), center, top, 10))
+    assert point == (10, 4) and share == pytest.approx(0) and distance == pytest.approx(6)
+    _, share, _ = angle_map(((10, 16), center, top, 10))
+    assert share == pytest.approx(0.5)  # straight down: half a turn
+    _, share, distance = angle_map(((0, 0), center, top, 10))
+    assert share is None and distance > 10  # outside the circle

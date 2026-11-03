@@ -243,6 +243,24 @@ def test_options_and_defaults_are_unchanged():
         assert option in help_text
 
 
+@pytest.mark.parametrize('columns', range(55, 241, 3))
+def test_help_keeps_default_paths_on_one_line(columns, monkeypatch):
+    # argparse wraps help to the terminal width (COLUMNS) and may break words at hyphens
+    monkeypatch.setenv('COLUMNS', str(columns))
+    help_text = cli.build_parser().format_help()
+    assert './dewarp-output.png' in help_text and './rewarp-output.png' in help_text
+
+
+def test_help_and_errors_list_the_accepted_suffixes(workdir, monkeypatch, capsys):
+    # One list of suffixes; the help and the error message are written from it
+    accepted = ', '.join(cli.IMAGE_SUFFIXES[:-1]) + ' or ' + cli.IMAGE_SUFFIXES[-1]
+    monkeypatch.setenv('COLUMNS', '200')  # one line per option help, so the phrase is not wrapped
+    assert cli.build_parser().format_help().count(accepted) == 2
+    (workdir / 'notes.txt').write_text('not an image')
+    run_cli(monkeypatch, '--fisheye_img_path', './notes.txt', '--save_dewarp_mesh_path', './d.pkl')
+    assert accepted in capsys.readouterr().out
+
+
 def test_main_takes_arguments_directly(workdir, inline_pool):
     cli.main(['--fisheye_img_path', './fisheye.png', '--save_dewarp_mesh_path', './dewarp-mesh.pkl'])
     assert (workdir / 'dewarp-output.png').is_file()

@@ -1,10 +1,9 @@
 """The ``fisheyewarping`` command."""
 import argparse
 import pickle
-import textwrap
 import time
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import cv2
 import numpy as np
@@ -12,6 +11,8 @@ import numpy as np
 from .fisheyewarping import FisheyeWarping
 
 IMAGE_SUFFIXES = ('.jpg', '.jpeg', '.png')
+#: The suffixes above as text for help and messages: '.jpg, .jpeg or .png'
+_SUFFIXES_TEXT = ', '.join(IMAGE_SUFFIXES[:-1]) + ' or ' + IMAGE_SUFFIXES[-1]
 
 EXAMPLES = """\
 examples:
@@ -26,13 +27,6 @@ examples:
     fisheyewarping --panorama_img_path panorama.jpg \\
       --load_dewarp_mesh_path dewarp-mesh.pkl --load_rewarp_mesh_path rewarp-mesh.pkl
 """
-
-
-class _HelpFormatter(argparse.RawDescriptionHelpFormatter):
-    """Keeps the examples as written, and never breaks a path such as ./dewarp-output.png at its hyphen."""
-
-    def _split_lines(self, text: str, width: int) -> List[str]:
-        return textwrap.wrap(text, width, break_on_hyphens=False)
 
 
 class _Stop(Exception):
@@ -60,13 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
         description='Dewarp a top-down fisheye image into a panorama, '
                     'and rewarp a panorama back into a fisheye image.',
         epilog=EXAMPLES,
-        formatter_class=_HelpFormatter,
+        formatter_class=argparse.RawDescriptionHelpFormatter,  # keeps the examples as written
     )
     images = parser.add_argument_group('input images (give one or both)')
     images.add_argument('--fisheye_img_path', metavar='PATH',
-                        help='Fisheye image to dewarp into a panorama (.jpg, .jpeg or .png).')
+                        help=f'Fisheye image to dewarp into a panorama ({_SUFFIXES_TEXT}).')
     images.add_argument('--panorama_img_path', metavar='PATH',
-                        help='Panorama to rewarp into a fisheye image (.jpg, .jpeg or .png). On its own it needs '
+                        help=f'Panorama to rewarp into a fisheye image ({_SUFFIXES_TEXT}). On its own it needs '
                              'both --load_*_mesh_path options; with --fisheye_img_path it uses the meshes of that image.')
 
     meshes = parser.add_argument_group('meshes (the slow part; build once, then load)')
@@ -79,13 +73,15 @@ def build_parser() -> argparse.ArgumentParser:
     meshes.add_argument('--load_rewarp_mesh_path', metavar='PATH',
                         help='Load a saved rewarp mesh instead of building one.')
     meshes.add_argument('--use_multiprocessing', metavar='True|False', type=str2bool, default=True,
-                        help='Build meshes with one worker process per CPU core. Default: %(default)s')
+                        help='Default: %(default)s. Build meshes with one worker process per CPU core.')
 
+    # Defaults come first in the help. argparse wraps help text and may break a path at a hyphen;
+    # at the start of the text, the paths stay whole on terminals 55 columns wide or wider.
     outputs = parser.add_argument_group('outputs')
     outputs.add_argument('--panorama_output', metavar='PATH', default='./dewarp-output.png',
-                         help='Where to write the panorama. Default: %(default)s')
+                         help='Default: %(default)s. Where to write the panorama.')
     outputs.add_argument('--fisheye_output', metavar='PATH', default='./rewarp-output.png',
-                         help='Where to write the fisheye image made from the panorama. Default: %(default)s')
+                         help='Default: %(default)s. Where to write the fisheye image made from the panorama.')
     return parser
 
 
@@ -202,7 +198,7 @@ def _check_image_path(value: Optional[str], option: str) -> Optional[Path]:
     print(f'----- `--{option}`: `{path}`')
     _check_file(path, option)
     if path.suffix.lower() not in IMAGE_SUFFIXES:
-        raise _Stop(f'`--{option}` must be a .jpg, .jpeg or .png image; `{path.name}` ends in `{path.suffix}`.')
+        raise _Stop(f'`--{option}` must be a {_SUFFIXES_TEXT} image; `{path.name}` ends in `{path.suffix}`.')
     return path
 
 

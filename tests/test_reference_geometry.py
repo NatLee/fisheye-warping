@@ -1,8 +1,12 @@
-"""Pin the output geometry: compare against the 1.0.x formulas, recomputed point by point.
+"""Pin the output geometry: compare against the reference formulas, recomputed point by point.
+
+For square images the reference is the 1.0.x code exactly. For other sizes it takes the centre
+and the radius from the image's real centre and inscribed circle, which 1.0.2 and earlier got
+wrong (they built the centre from (rows, cols) and the radius from one side).
 
 If one of these tests fails, the meshes or the images the package produces have changed.
-That may be on purpose (for example a fix for non-square images), but then it is a
-visible change for users and needs a note in the changelog.
+That may be on purpose, but then it is a visible change for users and needs a note in the
+changelog.
 
 The rendered images are compared with OpenCV calls made here, in the same environment,
 because `cv2.remap` itself gives slightly different pixels across OpenCV versions.
@@ -29,7 +33,7 @@ def polar_image(rows, cols):
 
 def reference_dewarp_maps(rows, cols):
     c_x, c_y = int(cols / 2), int(rows / 2)
-    r1, r2 = 0, int(cols) - c_x
+    r1, r2 = 0, min(int(cols) - c_x, int(rows) - c_y)  # 1.0.x: int(cols) - c_x
     width = int(2.0 * ((r2 + r1) / 2) * np.pi)
     height = r2 - r1
     map_x = np.zeros((height, width), np.float32)
@@ -48,15 +52,17 @@ def reference_rewarp_maps(rows, cols, panorama_width):
     map_x = np.zeros((rows, cols), np.float32)
     map_y = np.zeros((rows, cols), np.float32)
     mask = np.zeros((rows, cols), np.uint8)
-    # 1.0.x builds the centre from (rows, cols) as an (x, y) point, so it is only right for squares
-    center = np.asarray([int(rows / 2), int(cols / 2)])
-    top = np.asarray([int(rows / 2), 0])
+    # 1.0.x: centre [int(rows / 2), int(cols / 2)], top [int(rows / 2), 0], radius rows / 2;
+    # the same numbers for square images
+    center = np.asarray([int(cols / 2), int(rows / 2)])  # (x, y)
+    top = np.asarray([int(cols / 2), 0])
+    radius = min(rows, cols) / 2
     up = (top - center) / np.linalg.norm(top - center)
     for y in range(rows):
         for x in range(cols):
             offset = np.asarray((x, y)) - center
             distance = np.linalg.norm(offset)
-            if distance <= rows / 2:
+            if distance <= radius:
                 with np.errstate(invalid='ignore'):  # the centre pixel gives NaN, as in 1.0.x
                     angle = np.arccos(np.clip(np.dot(up, offset / distance), -1.0, 1.0))
                 map_x[y, x] = angle / (2 * np.pi) * panorama_width
@@ -74,7 +80,7 @@ def rotate_180(img):
 def reference_rewarp(panorama, map_x, map_y, mask):
     canvas = cv2.remap(panorama, map_x, map_y, cv2.INTER_LINEAR)
     right = cv2.remap(cv2.flip(panorama, 1), map_x, map_y, cv2.INTER_LINEAR)
-    split = int(canvas.shape[0] / 2) + 1
+    split = int(canvas.shape[1] / 2) + 1  # 1.0.x: int(canvas.shape[0] / 2) + 1
     canvas[:, split:, :] = right[:, split:, :]
     return cv2.add(canvas, np.zeros(canvas.shape, np.uint8), mask=mask)
 
@@ -90,7 +96,7 @@ def assert_same(actual, expected):
 
 @pytest.mark.parametrize('use_multiprocessing', [False, True], ids=['single', 'multi'])
 @pytest.mark.parametrize('rows, cols', SHAPES)
-def test_meshes_match_the_1_0_formulas(rows, cols, use_multiprocessing):
+def test_meshes_match_the_reference_formulas(rows, cols, use_multiprocessing):
     frd = FisheyeWarping(polar_image(rows, cols), use_multiprocessing=use_multiprocessing)
     panorama_shape, map_x, map_y = frd.build_dewarp_mesh()
     ref_x, ref_y = reference_dewarp_maps(rows, cols)
@@ -105,7 +111,7 @@ def test_meshes_match_the_1_0_formulas(rows, cols, use_multiprocessing):
 
 
 @pytest.mark.parametrize('rows, cols', SHAPES)
-def test_images_match_the_1_0_pipeline(rows, cols, panorama_img):
+def test_images_match_the_reference_pipeline(rows, cols, panorama_img):
     fisheye = polar_image(rows, cols)
     frd = FisheyeWarping(fisheye)
     _, map_x, map_y = frd.build_dewarp_mesh()
@@ -122,8 +128,9 @@ def test_images_match_the_1_0_pipeline(rows, cols, panorama_img):
     assert_same(frd.run_rewarp(), rotate_180(reference_rewarp(plain_dewarp, rewarp_x, rewarp_y, mask)))
 
 
-def test_panorama_size_follows_the_image_width():
-    # width = int(pi * outer radius), height = outer radius; the outer radius is half the width
-    for cols in (64, 101, 512):
-        shape, _, _ = FisheyeWarping(polar_image(cols, cols)).build_dewarp_mesh()
-        assert shape == (int(math.pi * (cols - int(cols / 2))), cols - int(cols / 2))
+def test_panorama_size_follows_the_shorter_side():
+    # width = int(pi * outer radius), height = outer radius; the outer radius is half the shorter side
+    for rows, cols in ((64, 64), (101, 101), (512, 512), (60, 80), (80, 60)):
+        radius = min(cols - int(cols / 2), rows - int(rows / 2))
+        shape, _, _ = FisheyeWarping(polar_image(rows, cols)).build_dewarp_mesh()
+        assert shape == (int(math.pi * radius), radius)

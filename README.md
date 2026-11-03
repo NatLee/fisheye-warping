@@ -36,9 +36,12 @@ panorama you rewarp is resized to that size first.
 
 ### The maths
 
-Take a square fisheye image *F* of *N* × *N* pixels. Its centre is (*c*, *c*) and its radius *R*,
-both *N*/2. Pixel (*x*, *y*) is column *x* and row *y*, so *x* grows to the right and *y* downwards.
-The panorama *P* is *W* × *H* pixels:
+Take a fisheye image *F* of *w* × *h* pixels. Pixel (*x*, *y*) is column *x* and row *y*, so *x*
+grows to the right and *y* downwards. The circle that gets unrolled is the largest one that fits,
+centred in the image: its centre is (*c*<sub>*x*</sub>, *c*<sub>*y*</sub>) = (*w*/2, *h*/2) and its
+radius is *R* = min(*w*, *h*)/2. For a square *N* × *N* image that is the centre (*N*/2, *N*/2) and
+the radius *N*/2; in a wider or taller image, the strips beside the circle are not used. The
+panorama *P* is *W* × *H* pixels:
 
 ```math
 W = \lfloor \pi R \rfloor, \qquad H = R
@@ -46,14 +49,14 @@ W = \lfloor \pi R \rfloor, \qquad H = R
 
 *W* is the length of the circle at half the radius, so the panorama keeps the scale there: it
 squeezes pixels together towards the rim and stretches them towards the centre. A 1024 × 1024 image
-gives a 1608 × 512 panorama.
+gives a 1608 × 512 panorama, a 1920 × 1080 frame a 1696 × 540 one.
 
 **Dewarp.** Column *u* of the panorama is an angle *φ*, measured clockwise from 6 o'clock, and row
 *v* is a distance *r* from the centre, counted from the rim:
 
 ```math
 \varphi = \frac{2\pi u}{W}, \qquad r = R - v, \qquad
-P(u, v) = F\big(\lfloor c - r\,\sin\varphi \rfloor,\ \lfloor c + r\,\cos\varphi \rfloor\big)
+P(u, v) = F\big(\lfloor c_x - r\,\sin\varphi \rfloor,\ \lfloor c_y + r\,\cos\varphi \rfloor\big)
 ```
 
 **Rewarp** runs the same map backwards. Each fisheye pixel inside the circle works out its distance
@@ -61,8 +64,8 @@ P(u, v) = F\big(\lfloor c - r\,\sin\varphi \rfloor,\ \lfloor c + r\,\cos\varphi 
 outside the circle stay black.
 
 ```math
-r = \sqrt{(x - c)^2 + (y - c)^2}, \qquad
-\psi = \mathrm{atan2}(c - x,\ y - c) \bmod 2\pi, \qquad
+r = \sqrt{(x - c_x)^2 + (y - c_y)^2}, \qquad
+\psi = \mathrm{atan2}(c_x - x,\ y - c_y) \bmod 2\pi, \qquad
 F(x, y) = P\Big(\frac{W\psi}{2\pi},\ R - r\Big) \quad \text{for } r \le R
 ```
 
@@ -93,7 +96,7 @@ apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0
 
 ## Quick start
 
-The examples use a square, top-down fisheye image `fisheye.jpg` and a panorama `panorama.jpg` in the
+The examples use a top-down fisheye image `fisheye.jpg` and a panorama `panorama.jpg` in the
 current folder. To try it with the photo above, scale
 [`doc/101-fisheye.jpg`](https://github.com/NatLee/fisheye-warping/blob/main/doc/101-fisheye.jpg) down to
 1024 × 1024 first (the Mesh files section explains why).
@@ -243,8 +246,9 @@ image would need around 8 GB.
 
 ## Limitations
 
-- **Square images only.** Other sizes are processed without errors, but the circle in a rewarped image
-  comes out off-centre. Crop the image to a square around the fisheye circle first.
+- **The circle has to be centred.** The tool unrolls the largest circle that fits around the
+  middle of the image. If your fisheye circle sits elsewhere or is smaller, crop the image to a
+  square around it first. (Up to 1.0.2, non-square images came out off-centre when rewarped.)
 - **The centre pixel of a rewarped image is black**, because the angle at the exact centre is undefined.
 
 ## Development

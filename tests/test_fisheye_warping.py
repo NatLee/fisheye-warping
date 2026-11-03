@@ -314,3 +314,51 @@ def test_no_save_path_saves_nothing(fisheye_img, tmp_path, monkeypatch):
     frd.build_rewarp_mesh(save_path=None)
     frd.run_dewarp(save_path='')
     assert list(tmp_path.iterdir()) == []
+
+
+def polar_fisheye(rows, cols):
+    """A smooth test image, coloured by angle and radius around the true centre of a rows x cols image."""
+    yy, xx = np.mgrid[0:rows, 0:cols].astype(np.float32)
+    dx, dy = xx - cols / 2, yy - rows / 2
+    img = np.zeros((rows, cols, 3), np.uint8)
+    img[..., 0] = (np.arctan2(dy, dx) + np.pi) / (2 * np.pi) * 255
+    img[..., 1] = np.clip(np.hypot(dx, dy) * 8, 0, 255)
+    img[..., 2] = 200
+    return img
+
+
+NON_SQUARE = [(40, 56), (56, 40), (48, 64)]
+
+
+@pytest.mark.parametrize('rows, cols', NON_SQUARE)
+def test_non_square_dewarp_reads_the_largest_circle_that_fits(rows, cols):
+    # The circle is centred in the image and its radius is half the shorter side
+    shape, map_x, map_y = FisheyeWarping(polar_fisheye(rows, cols)).build_dewarp_mesh()
+    radius = min(cols - cols // 2, rows - rows // 2)
+    assert shape == (int(np.pi * radius), radius)
+    assert 0 <= map_x.min() and map_x.max() <= cols  # never reads outside the image
+    assert 0 <= map_y.min() and map_y.max() <= rows
+
+
+@pytest.mark.parametrize('rows, cols', NON_SQUARE)
+def test_non_square_rewarp_draws_the_circle_around_the_centre(rows, cols):
+    frd = FisheyeWarping(polar_fisheye(rows, cols))
+    frd.build_dewarp_mesh()
+    _, _, mask = frd.build_rewarp_mesh()
+    yy, xx = np.mgrid[0:rows, 0:cols]
+    np.testing.assert_array_equal(mask > 0, np.hypot(xx - cols // 2, yy - rows // 2) <= min(rows, cols) / 2)
+
+
+@pytest.mark.parametrize('rows, cols', NON_SQUARE)
+def test_non_square_round_trip_restores_the_fisheye(rows, cols):
+    img = polar_fisheye(rows, cols)
+    frd = FisheyeWarping(img)
+    frd.build_dewarp_mesh()
+    frd.build_rewarp_mesh()
+    result = frd.run_rewarp()
+
+    yy, xx = np.mgrid[0:rows, 0:cols]
+    radius = np.hypot(xx - cols / 2, yy - rows / 2)
+    inside = (radius >= 4) & (radius < min(rows, cols) / 2 - 4)
+    error = np.abs(result.astype(int) - img.astype(int))[inside]
+    assert np.median(error) <= 5  # the same bound as for square images

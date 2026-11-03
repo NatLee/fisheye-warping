@@ -29,12 +29,12 @@ examples:
 """
 
 
-class _Stop(Exception):
-    """Ends the run after printing why. The exit code stays 0, as in 1.0.x.
+class _UsageError(Exception):
+    """Options that cannot work together. main() prints the usage and exits with 2, as argparse does."""
 
-    Whether these cases should exit with 1 is an open decision. Changing it is a change here and
-    in the ``STOPS`` cases of tests/test_cli.py, which pin the current behaviour.
-    """
+
+class _Failure(Exception):
+    """The options are fine, but a file is missing or cannot be used. main() exits with 1."""
 
 
 def str2bool(value: str) -> bool:
@@ -86,12 +86,39 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
-    """Run the ``fisheyewarping`` command with ``argv``, or with the command line when it is None."""
-    args = build_parser().parse_args(argv)
+    """Run the ``fisheyewarping`` command with ``argv``, or with the command line when it is None.
+
+    This is the one place that decides the exit code: 0 when it worked, 1 when a file is missing
+    or cannot be used, 2 for wrong or missing options (argparse's own convention, with the usage
+    line). Either way nothing more is written once the problem is found.
+    """
+    parser = build_parser()
+    args = parser.parse_args(argv)
     try:
+        _check_options(args)
         _run(args)
-    except _Stop as stop:
-        print(f'----- {stop}')
+    except _UsageError as error:
+        parser.error(str(error))
+    except _Failure as error:
+        raise SystemExit(f'{parser.prog}: error: {error}') from None
+
+
+def _check_options(args: argparse.Namespace) -> None:
+    """Refuse option combinations that cannot work, before any file is read or written."""
+    if not args.fisheye_img_path and not args.panorama_img_path:
+        raise _UsageError('Give `--fisheye_img_path` (fisheye to panorama), `--panorama_img_path` '
+                          '(panorama to fisheye), or both. See `fisheyewarping --help`.')
+    if args.fisheye_img_path and not (args.load_dewarp_mesh_path or args.save_dewarp_mesh_path):
+        raise _UsageError('Give `--save_dewarp_mesh_path` to build the dewarp mesh (first time), '
+                          'or `--load_dewarp_mesh_path` to load a saved one.')
+    if args.panorama_img_path and not args.fisheye_img_path:
+        # Rewarping needs the panorama size, which is stored in the dewarp mesh
+        if not args.load_dewarp_mesh_path:
+            raise _UsageError('Rewarping a panorama needs both saved meshes: give `--load_dewarp_mesh_path` and '
+                              '`--load_rewarp_mesh_path`. The dewarp mesh holds the panorama size.')
+        if not args.load_rewarp_mesh_path:
+            raise _UsageError('Rewarping a panorama also needs `--load_rewarp_mesh_path`. Make one from a fisheye '
+                              'image of the size you want with `--fisheye_img_path` and `--save_rewarp_mesh_path`.')
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -101,9 +128,6 @@ def _run(args: argparse.Namespace) -> None:
 
     fisheye_path = _check_image_path(args.fisheye_img_path, 'fisheye_img_path')
     panorama_path = _check_image_path(args.panorama_img_path, 'panorama_img_path')
-    if fisheye_path is None and panorama_path is None:
-        raise _Stop('Give `--fisheye_img_path` (fisheye to panorama), `--panorama_img_path` '
-                    '(panorama to fisheye), or both. See `fisheyewarping --help`.')
 
     print('===================')
     print(f'----- Build meshes with multiprocessing: `{args.use_multiprocessing}`')
@@ -113,7 +137,7 @@ def _run(args: argparse.Namespace) -> None:
         _fisheye_and_panorama(args, fisheye_path, panorama_path)
     elif fisheye_path:
         _fisheye_only(args, fisheye_path)
-    elif panorama_path:
+    elif panorama_path:  # always true here: _check_options asks for at least one image
         _panorama_only(args, panorama_path)
     print('========End of this process========')
 
@@ -159,36 +183,26 @@ def _panorama_only(args: argparse.Namespace, panorama_path: Path) -> None:
     start = time.time()
     frd = FisheyeWarping(None, use_multiprocessing=args.use_multiprocessing)
     panorama_img = _read_image(panorama_path)
-    # Rewarping needs the panorama size, which is stored in the dewarp mesh
-    if not args.load_dewarp_mesh_path:
-        raise _Stop('Rewarping a panorama needs both saved meshes: give `--load_dewarp_mesh_path` and '
-                    '`--load_rewarp_mesh_path`. The dewarp mesh holds the panorama size.')
     _load_mesh(frd.load_dewarp_mesh, args.load_dewarp_mesh_path, 'load_dewarp_mesh_path')
-    if not args.load_rewarp_mesh_path:
-        raise _Stop('Rewarping a panorama also needs `--load_rewarp_mesh_path`. Make one from a fisheye image '
-                    'of the size you want with `--fisheye_img_path` and `--save_rewarp_mesh_path`.')
     _load_mesh(frd.load_rewarp_mesh, args.load_rewarp_mesh_path, 'load_rewarp_mesh_path')
     frd.run_rewarp_with_mesh(panorama_img, save_path=args.fisheye_output)
     print(f'-------All Tasks Completed------- ({time.time() - start:.3f} s)')
 
 
 def _dewarp(frd: FisheyeWarping, args: argparse.Namespace) -> None:
-    """Load or build the dewarp mesh, then write the panorama."""
+    """Load or build the dewarp mesh (_check_options made sure one option is given), then write the panorama."""
     if args.load_dewarp_mesh_path:
         _load_mesh(frd.load_dewarp_mesh, args.load_dewarp_mesh_path, 'load_dewarp_mesh_path')
-    elif args.save_dewarp_mesh_path:
-        _build_mesh(frd.build_dewarp_mesh, args.save_dewarp_mesh_path, 'save_dewarp_mesh_path')
     else:
-        raise _Stop('Give `--save_dewarp_mesh_path` to build the dewarp mesh (first time), '
-                    'or `--load_dewarp_mesh_path` to load a saved one.')
+        _build_mesh(frd.build_dewarp_mesh, args.save_dewarp_mesh_path, 'save_dewarp_mesh_path')
     frd.run_dewarp(save_path=args.panorama_output)
 
 
 def _check_file(path: Path, option: str) -> None:
     if not path.exists():
-        raise _Stop(f'`--{option}` is `{path}`, which does not exist.')
+        raise _Failure(f'`--{option}` is `{path}`, which does not exist.')
     if not path.is_file():
-        raise _Stop(f'`--{option}` is `{path}`, which is not a file.')
+        raise _Failure(f'`--{option}` is `{path}`, which is not a file.')
 
 
 def _check_image_path(value: Optional[str], option: str) -> Optional[Path]:
@@ -198,19 +212,14 @@ def _check_image_path(value: Optional[str], option: str) -> Optional[Path]:
     print(f'----- `--{option}`: `{path}`')
     _check_file(path, option)
     if path.suffix.lower() not in IMAGE_SUFFIXES:
-        raise _Stop(f'`--{option}` must be a {_SUFFIXES_TEXT} image; `{path.name}` ends in `{path.suffix}`.')
+        raise _Failure(f'`--{option}` must be a {_SUFFIXES_TEXT} image; `{path.name}` ends in `{path.suffix}`.')
     return path
-
-
-def _failure(message: str) -> SystemExit:
-    """Exit code 1 with a message. Used where 1.0.x crashed with a traceback, which also ended with 1."""
-    return SystemExit(f'fisheyewarping: error: {message}')
 
 
 def _read_image(path: Path) -> np.ndarray:
     img = cv2.imread(path.as_posix())
     if img is None:
-        raise _failure(f'OpenCV cannot read `{path}` as an image. Is the file complete?')
+        raise _Failure(f'OpenCV cannot read `{path}` as an image. Is the file complete?')
     return img
 
 
@@ -220,11 +229,11 @@ def _load_mesh(load: Callable[..., object], value: str, option: str) -> None:
     try:
         load(mesh_path=value)
     except (ValueError, EOFError, pickle.UnpicklingError) as exc:
-        raise _failure(f'`--{option}`: {exc}') from exc
+        raise _Failure(f'`--{option}`: {exc}') from exc
 
 
 def _build_mesh(build: Callable[..., object], value: str, option: str) -> None:
     if Path(value).is_dir():
-        raise _Stop(f'`--{option}` is `{value}`, which is a directory. Give a file name, such as `{value}/mesh.pkl`.')
+        raise _Failure(f'`--{option}` is `{value}`, which is a directory. Give a file name, such as `{value}/mesh.pkl`.')
     print(f'----- Build the mesh and save it to `--{option}`: `{value}`')
     build(save_path=value)

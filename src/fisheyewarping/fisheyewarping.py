@@ -93,14 +93,14 @@ _Geometry = NamedTuple('_Geometry', [
 def _panorama_geometry(fisheye_shape: Sequence[int]) -> _Geometry:
     """Size of the panorama for a fisheye image, and the circle it is read from.
 
-    The circle sits in the middle of the image and its radius is half the image width. The
-    panorama is as tall as that radius and as wide as the circle's circumference at half the
-    radius.
+    The circle sits in the middle of the image and is the largest that fits: its radius is half
+    the shorter side. The panorama is as tall as that radius and as wide as the circle's
+    circumference at half the radius.
     """
     rows, cols = fisheye_shape[:2]
     center_x, center_y = int(cols / 2), int(rows / 2)
     inner_radius = 0  # the panorama reaches all the way to the centre
-    outer_radius = int(cols) - center_x
+    outer_radius = min(int(cols) - center_x, int(rows) - center_y)
     width = int(2.0 * ((outer_radius + inner_radius) / 2) * np.pi)
     height = outer_radius - inner_radius
     return _Geometry(width, height, inner_radius, outer_radius, center_x, center_y)
@@ -157,15 +157,15 @@ _Circle = NamedTuple('_Circle', [
 def _rewarp_circle(rows: int, cols: int) -> _Circle:
     """The circle of a rewarped image, and the column where its mirrored right half starts.
 
-    Kept from 1.0.x so that no output changes: it builds the centre ``(x, y)`` from
-    ``(rows, cols)``, takes half the height as the radius and splits the halves at the middle
-    row count. That is right for square images only; other sizes come out off-centre (README,
-    "Limitations"). Fixing non-square images means changing this one function, and the 1.0.x
-    reference in tests/test_reference_geometry.py with it.
+    Like the circle dewarping reads, it is centred in the image and as large as fits. The centre
+    and the top point are ``(x, y)``; the angle is measured from the top point.
+    (1.0.2 and earlier built the centre from ``(rows, cols)`` and the radius and split from the
+    height, which is the same for square images only.)
     """
-    center = np.asarray([int(rows / 2), int(cols / 2)])
-    top_point = np.asarray([int(rows / 2), 0])
-    return _Circle(center, top_point, rows / 2, int(rows / 2) + 1)
+    center_x, center_y = int(cols / 2), int(rows / 2)
+    center = np.asarray([center_x, center_y])
+    top_point = np.asarray([center_x, 0])
+    return _Circle(center, top_point, min(rows, cols) / 2, center_x + 1)
 
 
 def _build_rewarp_maps(img: np.ndarray, panorama_width: int, use_multiprocessing: bool) -> RewarpMesh:

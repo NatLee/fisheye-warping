@@ -1,308 +1,405 @@
 """
-Fisheye Rewarp And Dewarp
+Dewarp a top-down fisheye image into a panorama, and rewarp a panorama back into a fisheye image.
+
+Both directions use a *mesh*: for every output pixel it says which input pixel to read, and
+``cv2.remap`` does the reading. Building a mesh is slow, so it can be saved to a file and loaded
+again for any other image of the same size.
 """
+import multiprocessing as mp
+import os
 import pickle
+import time
+import warnings
+from typing import Any, Callable, Iterable, NamedTuple, Optional, Sequence, Tuple, Union
+
 import cv2
 import numpy as np
 from tqdm import tqdm
-import multiprocessing as mp
-import time
 
-def unit_vector(vector):
-    """ Returns the unit vector of the vector.  """
-    np.seterr(invalid='ignore')
+#: ``(width, height)`` of the panorama, the order ``cv2.resize`` takes
+PanoramaShape = Tuple[int, int]
+#: A file path: ``str`` or ``pathlib.Path``
+PathLike = Union[str, os.PathLike]
+#: What ``build_dewarp_mesh`` returns and saves: ``(panorama shape, map x, map y)``
+DewarpMesh = Tuple[PanoramaShape, np.ndarray, np.ndarray]
+#: What ``build_rewarp_mesh`` returns and saves: ``(map x, map y, mask)``
+RewarpMesh = Tuple[np.ndarray, np.ndarray, np.ndarray]
+
+Vector = Union[Sequence[float], np.ndarray]
+Point = Tuple[int, int]
+
+
+class MeshNotReadyError(RuntimeError, AssertionError):
+    """A mesh is needed but has not been built or loaded yet.
+
+    It is also an ``AssertionError``, which is what version 1.0.x raised here, so code that
+    catches that keeps working. Unlike an ``assert``, it is still raised under ``python -O``.
+    """
+
+
+def unit_vector(vector: Vector) -> np.ndarray:
+    """Return ``vector`` scaled to length 1. A zero vector gives NaNs."""
+    vector = np.asarray(vector)
     norm = np.linalg.norm(vector)
+    if norm == 0:
+        # 0 / 0 is NaN on purpose. Silence that warning here only, not for the whole program.
+        with np.errstate(invalid='ignore'):
+            return vector / norm
     return vector / norm
 
-def angle_between(v1, v2):
-    """ Returns the angle in radians between vectors 'v1' and 'v2'::
-            >>> angle_between((1, 0, 0), (0, 1, 0))
-            1.5707963267948966
-            >>> angle_between((1, 0, 0), (1, 0, 0))
-            0.0
-            >>> angle_between((1, 0, 0), (-1, 0, 0))
-            3.141592653589793
+
+def angle_between(v1: Vector, v2: Vector) -> float:
+    """Return the angle in radians between vectors ``v1`` and ``v2``, from 0 to pi.
+
+    >>> float(angle_between((1, 0, 0), (0, 1, 0)))
+    1.5707963267948966
+    >>> float(angle_between((1, 0, 0), (1, 0, 0)))
+    0.0
+    >>> float(angle_between((1, 0, 0), (-1, 0, 0)))
+    3.141592653589793
     """
     v1_u = unit_vector(v1)
     v2_u = unit_vector(v2)
     return np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0))
 
-def angle_map(points):
+
+def angle_map(points: Tuple[Point, np.ndarray, np.ndarray, float]) -> Tuple[Point, Optional[float], float]:
+    """Place one fisheye pixel on the panorama; one job of the rewarp mesh.
+
+    ``points`` is ``((x, y), center, top_point, radius)``. Returns ``((x, y), share, distance)``:
+    ``share`` is the angle between the pixel and ``top_point`` seen from ``center``, as a share of
+    a full turn (0 to 0.5), or None when the pixel is outside the circle; ``distance`` is how far
+    the pixel is from ``center``.
+    """
     point, center, top_point, radius = points
     point_np = np.asarray(point)
-    distance = np.linalg.norm(point_np-center)
-    length_percentage = None
+    distance = np.linalg.norm(point_np - center)
+    share = None
     if distance <= radius:
-        angle = angle_between(top_point-center, point_np-center)
-        length_percentage = angle / (2 * np.pi)
-    return point, length_percentage, distance
+        angle = angle_between(top_point - center, point_np - center)
+        share = angle / (2 * np.pi)
+    return point, share, distance
+
+
+# Where the panorama comes from in a fisheye image, see `_panorama_geometry`
+_Geometry = NamedTuple('_Geometry', [
+    ('width', int), ('height', int),
+    ('inner_radius', int), ('outer_radius', int),
+    ('center_x', int), ('center_y', int),
+])
+
+
+def _panorama_geometry(fisheye_shape: Sequence[int]) -> _Geometry:
+    """Size of the panorama for a fisheye image, and the circle it is read from.
+
+    The circle sits in the middle of the image and its radius is half the image width. The
+    panorama is as tall as that radius and as wide as the circle's circumference at half the
+    radius.
+    """
+    rows, cols = fisheye_shape[:2]
+    center_x, center_y = int(cols / 2), int(rows / 2)
+    inner_radius = 0  # the panorama reaches all the way to the centre
+    outer_radius = int(cols) - center_x
+    width = int(2.0 * ((outer_radius + inner_radius) / 2) * np.pi)
+    height = outer_radius - inner_radius
+    return _Geometry(width, height, inner_radius, outer_radius, center_x, center_y)
+
+
+def _dewarp_point(job: Tuple[int, int, _Geometry]) -> Tuple[Point, int, int]:
+    """Find the fisheye pixel that panorama pixel ``(y, x)`` comes from; one job of the dewarp mesh."""
+    y, x, (width, height, inner_radius, outer_radius, center_x, center_y) = job
+    radius = (float(y) / float(height)) * (outer_radius - inner_radius) + inner_radius
+    theta = (float(x) / float(width)) * 2.0 * np.pi
+    source_x = int(center_x + radius * np.sin(theta))
+    source_y = int(center_y + radius * np.cos(theta))
+    return (y, x), source_x, source_y
+
+
+def _run_jobs(func: Callable[[Any], Any], jobs: Iterable[Any], use_multiprocessing: bool, name: str) -> Iterable[Any]:
+    """Run ``func`` on every job, in worker processes or right here. Results keep the order of the jobs."""
+    if not use_multiprocessing:
+        return map(func, jobs)
+    jobs = list(jobs)
+    start = time.time()
+    print('-------Start multi pixel mapping for {}-------'.format(name))
+    with mp.Pool() as pool:
+        results = pool.map(func, jobs)
+    print('--------Mapping Completed-------- ({:0.3f} s)'.format(time.time() - start))
+    return results
+
+
+def _build_dewarp_maps(img: np.ndarray, use_multiprocessing: bool) -> Tuple[np.ndarray, np.ndarray]:
+    geometry = _panorama_geometry(img.shape)
+    map_x = np.zeros((geometry.height, geometry.width), np.float32)
+    map_y = np.zeros((geometry.height, geometry.width), np.float32)
+    # The last row and column are never filled and stay 0, as in 1.0.x
+    rows = tqdm(range(geometry.height - 1), desc='Building dewarp mesh')
+    jobs = ((y, x, geometry) for y in rows for x in range(geometry.width - 1))
+    for (y, x), source_x, source_y in _run_jobs(_dewarp_point, jobs, use_multiprocessing, 'dewarping'):
+        map_x[y, x] = source_x
+        map_y[y, x] = source_y
+    return map_x, map_y
+
+
+def _build_rewarp_maps(img: np.ndarray, panorama_width: int, use_multiprocessing: bool) -> RewarpMesh:
+    rows, cols = img.shape[:2]
+    map_x = np.zeros((rows, cols), dtype=np.float32)
+    map_y = np.zeros((rows, cols), dtype=np.float32)
+    mask = np.zeros((rows, cols), dtype=np.uint8)
+    # 1.0.x builds the centre (x, y) from (rows, cols) and takes half the height as the radius.
+    # That is only right for square images; kept as it is so that no output changes.
+    center = np.asarray([int(rows / 2), int(cols / 2)])
+    top_point = np.asarray([int(rows / 2), 0])
+    radius = rows / 2
+    jobs = (((x, y), center, top_point, radius)
+            for y in tqdm(range(rows), desc='Building rewarp mesh') for x in range(cols))
+    for (x, y), share, distance in _run_jobs(angle_map, jobs, use_multiprocessing, 'rewarping'):
+        if share is not None:
+            map_x[y, x] = share * panorama_width
+            map_y[y, x] = distance
+            mask[y, x] = 255
+    return map_x, map_y, mask
+
+
+def _rotate_180(img: np.ndarray) -> np.ndarray:
+    """Turn an image upside down around ``(w/2, h/2)``, as 1.0.x does.
+
+    Not quite ``cv2.rotate``: pixel ``x`` lands on ``w - x``, so the input's first row and
+    column drop out and the output's first row and column are black.
+    """
+    h, w = img.shape[:2]
+    matrix = cv2.getRotationMatrix2D((w / 2, h / 2), 180, 1)
+    return cv2.warpAffine(img, matrix, (w, h))
+
+
+def _save_target(save_path: Optional[PathLike]) -> Optional[str]:
+    """The file to save to, or None to save nothing. None and '' save nothing, as in 1.0.x."""
+    if isinstance(save_path, os.PathLike):
+        save_path = os.fspath(save_path)
+    return save_path if isinstance(save_path, str) and save_path else None
+
+
+def _save_pickle(path: PathLike, data: Any) -> None:
+    with open(path, 'wb') as f:
+        pickle.dump(data, f)
+
+
+def _load_pickle(path: PathLike) -> Any:
+    with open(path, 'rb') as f:
+        return pickle.load(f)
+
+
+def _save_image(save_path: Optional[PathLike], img: np.ndarray) -> None:
+    target = _save_target(save_path)
+    if target and not cv2.imwrite(target, img):
+        # OpenCV only returns False, for example when the folder does not exist
+        warnings.warn(f'OpenCV could not write `{target}`. Does its folder exist?', stacklevel=3)
+
+
+def _require_image(img: Optional[np.ndarray], needed_by: str) -> np.ndarray:
+    if img is None:
+        raise TypeError(f'{needed_by} needs an image but got None. '
+                        '(cv2.imread returns None when it cannot read a file.)')
+    return img
+
+
+def _is_map(value: Any) -> bool:
+    return isinstance(value, np.ndarray) and value.ndim == 2
+
+
+def _is_size(value: Any) -> bool:
+    return (isinstance(value, (tuple, list)) and len(value) == 2
+            and all(isinstance(v, (int, np.integer)) for v in value))
+
+
+def _looks_like_dewarp_mesh(mesh: Any) -> bool:
+    """``(panorama shape, map x, map y)``, or ``(map x, map y)`` as saved by 1.0.x."""
+    if not isinstance(mesh, (tuple, list)):
+        return False
+    if len(mesh) == 2:
+        return _is_map(mesh[0]) and _is_map(mesh[1]) and mesh[0].shape == mesh[1].shape
+    return (len(mesh) == 3 and _is_size(mesh[0]) and _is_map(mesh[1]) and _is_map(mesh[2])
+            and mesh[1].shape == mesh[2].shape)
+
+
+def _looks_like_rewarp_mesh(mesh: Any) -> bool:
+    """``(map x, map y, mask)``"""
+    return (isinstance(mesh, (tuple, list)) and len(mesh) == 3 and all(_is_map(m) for m in mesh)
+            and mesh[0].shape == mesh[1].shape == mesh[2].shape)
+
+
+def _load_mesh(mesh_path: PathLike, kind: str) -> Any:
+    """Read a pickled mesh and check that it is a ``kind`` ('dewarp' or 'rewarp') mesh."""
+    mesh = _load_pickle(mesh_path)
+    expected, other = ((_looks_like_dewarp_mesh, _looks_like_rewarp_mesh) if kind == 'dewarp'
+                       else (_looks_like_rewarp_mesh, _looks_like_dewarp_mesh))
+    if expected(mesh):
+        return mesh
+    if other(mesh):
+        swapped = 'rewarp' if kind == 'dewarp' else 'dewarp'
+        raise ValueError(f'`{mesh_path}` holds a {swapped} mesh, not a {kind} mesh. '
+                         'Are the dewarp and rewarp mesh files swapped?')
+    raise ValueError(f'`{mesh_path}` is not a {kind} mesh saved by FisheyeWarping.')
+
 
 class FisheyeWarping:
+    """Turn a top-down fisheye image into a panorama (dewarp) and a panorama into a fisheye image (rewarp).
 
-    def __init__(self, img, use_multiprocessing=False):
+    ``img`` is the fisheye image as OpenCV reads it (``cv2.imread``), or None when you only
+    rewarp with meshes loaded from files. ``use_multiprocessing`` builds meshes with one worker
+    process per CPU core; in a script, call it under ``if __name__ == '__main__':``.
+    """
+
+    def __init__(self, img: Optional[np.ndarray], use_multiprocessing: bool = False) -> None:
         self.img = img
         self.use_multiprocessing = use_multiprocessing
 
-        self.__dewarp_map_x, self.__dewarp_map_y = None, None
-        self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask = None, None, None
+        self._dewarp_map_x = None  # type: Optional[np.ndarray]
+        self._dewarp_map_y = None  # type: Optional[np.ndarray]
+        self._rewarp_map_x = None  # type: Optional[np.ndarray]
+        self._rewarp_map_y = None  # type: Optional[np.ndarray]
+        self._rewarp_mask = None  # type: Optional[np.ndarray]
+        self._panorama_shape = None  # type: Optional[PanoramaShape]
 
-        self.__panorama_shape = None
+    # ---- dewarp: fisheye -> panorama ---------------------------------------------------
 
-    def build_dewarp_mesh(self, save_path=None):
-        if self.use_multiprocessing:
-            self.__dewarp_map_x, self.__dewarp_map_y = self.__build_dewarp_map_with_mp(self.img)
-        else:
-            self.__dewarp_map_x, self.__dewarp_map_y = self.__build_dewarp_map(self.img)
-        h, w = self.__dewarp_map_x.shape
-        self.__panorama_shape = (w, h)
-        if save_path and isinstance(save_path, str):
-            with open(save_path, 'wb') as f:
-                # Same layout that `load_dewarp_mesh` reads: (panorama shape, map x, map y)
-                pickle.dump((self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y), f)
-        print(f'Dewarp Map X shape -> {self.__dewarp_map_x.shape}')
-        print(f'Dewarp Map Y shape -> {self.__dewarp_map_y.shape}')
-        return  self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y
+    def build_dewarp_mesh(self, save_path: Optional[PathLike] = None) -> DewarpMesh:
+        """Build the mesh that turns this fisheye image into a panorama; save it when ``save_path`` is given.
 
-    def load_dewarp_mesh(self, mesh_path:str):
-        with open(mesh_path, 'rb') as f:
-            mesh = pickle.load(f)
+        Returns ``(panorama shape, map x, map y)``, where the panorama shape is ``(width, height)``.
+        """
+        img = self._require_fisheye('build_dewarp_mesh()')
+        self._dewarp_map_x, self._dewarp_map_y = _build_dewarp_maps(img, self.use_multiprocessing)
+        rows, cols = self._dewarp_map_x.shape
+        self._panorama_shape = (cols, rows)
+        mesh = (self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y)
+        target = _save_target(save_path)
+        if target:
+            _save_pickle(target, mesh)
+        print(f'Dewarp Map X shape -> {self._dewarp_map_x.shape}')
+        print(f'Dewarp Map Y shape -> {self._dewarp_map_y.shape}')
+        return mesh
+
+    def load_dewarp_mesh(self, mesh_path: PathLike) -> DewarpMesh:
+        """Load a mesh saved by ``build_dewarp_mesh`` (also the 1.0.x format). Returns it like ``build_dewarp_mesh``.
+
+        Raises ``ValueError`` when the file holds something else, such as a rewarp mesh.
+        """
+        mesh = _load_mesh(mesh_path, 'dewarp')
         if len(mesh) == 2:
             # Files saved by version 1.0.x only hold (map x, map y)
-            self.__dewarp_map_x, self.__dewarp_map_y = mesh
-            h, w = self.__dewarp_map_x.shape
-            self.__panorama_shape = (w, h)
+            self._dewarp_map_x, self._dewarp_map_y = mesh
+            rows, cols = self._dewarp_map_x.shape
+            self._panorama_shape = (cols, rows)
         else:
-            self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y = mesh
-        return self.__panorama_shape, self.__dewarp_map_x, self.__dewarp_map_y
+            self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y = mesh
+        return self._panorama_shape, self._dewarp_map_x, self._dewarp_map_y
 
-    def run_dewarp(self, save_path=None):
-        result = self.dewarp(self.img, flip=True)
+    def run_dewarp(self, save_path: Optional[PathLike] = None) -> np.ndarray:
+        """Dewarp this fisheye image into a panorama; save it when ``save_path`` is given."""
+        self._require_dewarp_mesh()
+        result = self.dewarp(self._require_fisheye('run_dewarp()'), flip=True)
         print(f'Panorama shape is `{result.shape}`')
-        if save_path and isinstance(save_path, str):
-            cv2.imwrite(save_path, result)
+        _save_image(save_path, result)
         return result
 
-    def build_rewarp_mesh(self, save_path=None):
-        if self.use_multiprocessing:
-            self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask = self.__build_rewarp_map_with_mp()
-        else:
-            self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask = self.__build_rewarp_map()
-        if save_path and isinstance(save_path, str):
-            with open(save_path, 'wb') as f:
-                pickle.dump((self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask), f)
-        print(f'Rewarp Map X shape -> {self.__rewarp_map_x.shape}')
-        print(f'Rewarp Map Y shape -> {self.__rewarp_map_y.shape}')
-        print(f'Rewarp Map MASK shape -> {self.__rewarp_mask.shape}')
-        return self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask
-
-    def load_rewarp_mesh(self, mesh_path:str):
-        with open(mesh_path, 'rb') as f:
-            self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask = pickle.load(f)
-        return self.__rewarp_map_x, self.__rewarp_map_y, self.__rewarp_mask
-
-    def run_rewarp(self, save_path=None):
-        dewarp_result = self.dewarp(self.img, flip=False)
-        result = self.rewarp(dewarp_result, flip=True)
-        print(f'Fisheye image shape is `{result.shape}`')
-        if save_path and isinstance(save_path, str):
-            cv2.imwrite(save_path, result)
-        return result
-
-    def run_rewarp_with_mesh(self, panorama_img, save_path):
-        warning_msg = "Rewarp needs the shape of panorama generated from `run_dewarp`. Please run it first."
-        assert self.__panorama_shape != None, warning_msg
-        panorama_img = cv2.resize(panorama_img, self.__panorama_shape)
-        panorama_img = self.__wrap(panorama_img, rotate_angle=180, scale=1)
-        result = self.rewarp(
-            panorama_img,
-            flip=True
-        )
-        print(f'Fisheye image shape is `{result.shape}`')
-        if save_path and isinstance(save_path, str):
-            cv2.imwrite(save_path, result)
-        return result
-
-    def __get_fisheye_img_data(self, img):
-        # Center
-        c_x = int(img.shape[1]/2)
-        c_y = int(img.shape[0]/2)
-        # Inner circle, now is zero
-        r1_x = int(img.shape[1]/2)
-        #r1_y = int(img.shape[0]/2)
-        r1 = r1_x - c_x
-        # Outter circle
-        r2_x = int(img.shape[1])
-        #r2_y = 0
-        r2 = r2_x - c_x
-        # Rectangle width and height
-        w_d = int(2.0 * (( r2 + r1 ) / 2) * np.pi)
-        h_d = (r2 - r1)
-        return w_d, h_d, r1, r2, c_x, c_y
-
-    def _dewarp_map_job(self, point):
-        y, x, img_details = point
-        w_d, h_d, r1, r2, c_x, c_y = img_details
-        r = (float(y) / float(h_d)) * (r2 - r1) + r1
-        theta = (float(x) / float(w_d)) * 2.0 * np.pi
-        x_s = int(c_x + r * np.sin(theta))
-        y_s = int(c_y + r * np.cos(theta))
-        return (y, x), x_s, y_s
-
-    def __build_dewarp_map(self, img):
-        img_details = self.__get_fisheye_img_data(img)
-        w_d, h_d, _, _, _, _ = img_details
-        mapx = np.zeros((h_d, w_d), np.float32)
-        mapy = np.zeros((h_d, w_d), np.float32)
-        for y in tqdm(range(0, int(h_d-1)), desc='Run dewarp job...'):
-            for x in range(0, int(w_d-1)):
-                _, x_s, y_s = self._dewarp_map_job((y, x, img_details))
-                mapx[y, x] = x_s
-                mapy[y, x] = y_s
-        return mapx, mapy
-
-    def __build_dewarp_map_with_mp(self, img):
-        img_details = self.__get_fisheye_img_data(img)
-        w_d, h_d, _, _, _, _ = img_details
-        mapx = np.zeros((h_d, w_d), np.float32)
-        mapy = np.zeros((h_d, w_d), np.float32)
-
-        jobList = list()
-        for y in tqdm(range(0, int(h_d-1)), desc='Getting (x, y) for rectangle...'):
-            for x in range(0, int(w_d-1)):
-                jobList.append((y, x, img_details))
-        st = time.time()
-        print('-------Start multi pixel mapping for dewarpping-------')
-        with mp.Pool() as p:
-            results = p.map(self._dewarp_map_job, jobList)
-        print('--------Mapping Completed-------- ({:0.3f} s)'.format(time.time() - st))
-        for result in tqdm(results, desc='Mapping values to rectangle...'):
-            point, x_s, y_s = result
-            mapx[point] = x_s
-            mapy[point] = y_s
-        
-        return mapx, mapy
-
-    def dewarp(self, img, flip=False):
-        warning_msg = "Dewarp mesh have not been created! Please run `build_dewarp_mesh` first."
-        assert self.__dewarp_map_x is not None, warning_msg
-        assert self.__dewarp_map_y is not None, warning_msg
-        output = cv2.remap(
-            img,
-            self.__dewarp_map_x,
-            self.__dewarp_map_y,
-            cv2.INTER_LINEAR
-        )
+    def dewarp(self, img: np.ndarray, flip: bool = False) -> np.ndarray:
+        """Apply the dewarp mesh to ``img``. ``flip`` turns the result upside down, as ``run_dewarp`` does."""
+        map_x, map_y = self._require_dewarp_mesh()
+        output = cv2.remap(_require_image(img, 'dewarp()'), map_x, map_y, cv2.INTER_LINEAR)
         if flip:
-            output = self.__wrap(output, 180, scale=1)
+            output = _rotate_180(output)
         return output
 
-    def __wrap(self, img, rotate_angle, scale=1/3):
-        h, w = img.shape[:2]
-        # get the center
-        center = (w / 2, h / 2)
-        r_matrix = cv2.getRotationMatrix2D(center, rotate_angle, 1)
-        img = cv2.warpAffine(img, r_matrix, (w, h))
-        img = cv2.resize(
-            img,
-            dsize=(int(w * scale), int(h * scale)),
-            interpolation=cv2.INTER_AREA
-        )
-        return img
+    # ---- rewarp: panorama -> fisheye ---------------------------------------------------
 
-    def __build_rewarp_map(self):
-        width, height, _  = self.img.shape
-        xmap = np.zeros((width, height), dtype=np.float32)
-        ymap = np.zeros((width, height), dtype=np.float32)
-        mask = np.zeros((width, height), dtype=np.uint8)
-        center = np.asarray([int(width/2), int(height/2)])
-        top_point = np.asarray([int(width/2), 0])
-        radius = width/2
-        results = list()
-        for y, channel in enumerate(tqdm(self.img, desc='Run rewarp job...')):
-            for x, _ in enumerate(channel):
-                points = ((x, y), center, top_point, radius)
-                results.append(angle_map(points))
+    def build_rewarp_mesh(self, save_path: Optional[PathLike] = None) -> RewarpMesh:
+        """Build the mesh that turns a panorama back into a fisheye image of this size; save it when ``save_path`` is given.
 
-        dewarp_result = self.dewarp(self.img, flip=False)
-        for result in results:
-            (x, y), length_percentage, distance = result
-            if length_percentage is not None:
-                point = (y, x)
-                length = length_percentage * dewarp_result.shape[1]
-                xmap[point] = length
-                ymap[point] = distance
-                mask[point] = 255
-        
-        return xmap, ymap, mask
+        Needs the dewarp mesh first (built or loaded). Returns ``(map x, map y, mask)``.
+        """
+        img = self._require_fisheye('build_rewarp_mesh()')
+        dewarp_map_x, _ = self._require_dewarp_mesh()
+        panorama_width = dewarp_map_x.shape[1]
+        mesh = _build_rewarp_maps(img, panorama_width, self.use_multiprocessing)
+        self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask = mesh
+        target = _save_target(save_path)
+        if target:
+            _save_pickle(target, mesh)
+        print(f'Rewarp Map X shape -> {mesh[0].shape}')
+        print(f'Rewarp Map Y shape -> {mesh[1].shape}')
+        print(f'Rewarp Map MASK shape -> {mesh[2].shape}')
+        return mesh
 
-    def __build_rewarp_map_with_mp(self):
-        width, height, _  = self.img.shape
-        xmap = np.zeros((width, height), dtype=np.float32)
-        ymap = np.zeros((width, height), dtype=np.float32)
-        mask = np.zeros((width, height), dtype=np.uint8)
-        center = np.asarray([int(width/2), int(height/2)])
-        top_point = np.asarray([int(width/2), 0])
-        radius = width / 2
-        jobs = list()
-        for y, channel in enumerate(tqdm(self.img, desc='Getting (x, y) for circle...')):
-            for x, _ in enumerate(channel):
-                points = ((x, y), center, top_point, radius)
-                jobs.append(points)
-        s = time.time()
-        print('-------Start multi pixel mapping for rewarpping-------')
-        with mp.Pool() as p:
-            results = p.map(angle_map, jobs)
-        print('--------Mapping Completed-------- ({:0.3f} s)'.format(time.time()-s))
-        dewarp_result = self.dewarp(self.img, flip=False)
-        for result in tqdm(results, desc='Mapping values to circle...'):
-            (x, y), length_percentage, distance = result
-            if length_percentage is not None:
-                point = (y, x)
-                length = length_percentage * dewarp_result.shape[1]
-                xmap[point] = length
-                ymap[point] = distance
-                mask[point] = 255
+    def load_rewarp_mesh(self, mesh_path: PathLike) -> RewarpMesh:
+        """Load a mesh saved by ``build_rewarp_mesh``. Returns it like ``build_rewarp_mesh``.
 
-        return xmap, ymap, mask
+        Raises ``ValueError`` when the file holds something else, such as a dewarp mesh.
+        """
+        self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask = _load_mesh(mesh_path, 'rewarp')
+        return self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask
 
-    # =================================================================
+    def run_rewarp(self, save_path: Optional[PathLike] = None) -> np.ndarray:
+        """Dewarp this fisheye image and rewarp the result: a round trip back to a fisheye image."""
+        self._require_dewarp_mesh()
+        dewarp_result = self.dewarp(self._require_fisheye('run_rewarp()'), flip=False)
+        result = self.rewarp(dewarp_result, flip=True)
+        print(f'Fisheye image shape is `{result.shape}`')
+        _save_image(save_path, result)
+        return result
 
-    def __remap(self, img, x, y):
-        return cv2.remap(img, x, y, cv2.INTER_LINEAR)
+    def run_rewarp_with_mesh(self, panorama_img: np.ndarray, save_path: Optional[PathLike] = None) -> np.ndarray:
+        """Rewarp any panorama into a fisheye image; save it when ``save_path`` is given.
 
-    def half_rewarp_map(self, panorama_img, x, y):
-        # get left part
-        left_output = self.__remap(panorama_img, x, y)
-        # get right part
-        right_output = self.__remap(cv2.flip(panorama_img, 1), x, y)
+        Needs both meshes: the dewarp mesh tells the panorama size, the rewarp mesh does the work.
+        The panorama is resized to the size the meshes were built for.
+        """
+        if self._panorama_shape is None:
+            raise MeshNotReadyError('Rewarping a panorama needs the panorama size from the dewarp mesh: '
+                                    'call build_dewarp_mesh() or load_dewarp_mesh() first.')
+        panorama_img = cv2.resize(_require_image(panorama_img, 'run_rewarp_with_mesh()'), self._panorama_shape)
+        panorama_img = _rotate_180(panorama_img)
+        result = self.rewarp(panorama_img, flip=True)
+        print(f'Fisheye image shape is `{result.shape}`')
+        _save_image(save_path, result)
+        return result
+
+    def half_rewarp_map(self, panorama_img: np.ndarray, x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Remap ``panorama_img`` and its mirror image with maps ``x`` and ``y``: the two halves of the circle."""
+        left_output = cv2.remap(panorama_img, x, y, cv2.INTER_LINEAR)
+        right_output = cv2.remap(cv2.flip(panorama_img, 1), x, y, cv2.INTER_LINEAR)
         return left_output, right_output
 
-    def rewarp(self, panorama_img, flip=False):
-        warning_msg = "Rewarp mesh have not been created! Please run `build_rewarp_mesh` first."
-        assert self.__rewarp_map_x is not None, warning_msg
-        assert self.__rewarp_map_y is not None, warning_msg
-        assert self.__rewarp_mask is not None, warning_msg
-        left_output, right_output = self.half_rewarp_map(
-            panorama_img,
-            self.__rewarp_map_x,
-            self.__rewarp_map_y
-        )
-
-        re_render_canvas = left_output
-        # find the center of the image
-        vertical_center = int(re_render_canvas.shape[0] / 2) + 1
-        # combine 2 parts
-        re_render_canvas[:, vertical_center:, :] = right_output[:, vertical_center:, :]
-
-        re_render_canvas = cv2.add(
-            re_render_canvas,
-            np.zeros(re_render_canvas.shape, dtype=np.uint8),
-            mask=self.__rewarp_mask
-        )
-
+    def rewarp(self, panorama_img: np.ndarray, flip: bool = False) -> np.ndarray:
+        """Apply the rewarp mesh to ``panorama_img``. ``flip`` turns the result upside down."""
+        map_x, map_y, mask = self._require_rewarp_mesh()
+        panorama_img = _require_image(panorama_img, 'rewarp()')
+        canvas, right_output = self.half_rewarp_map(panorama_img, map_x, map_y)
+        # The angle only covers half a turn, so the right half comes from the mirrored panorama.
+        # 1.0.x splits at the middle row count, which is the middle column for square images.
+        split = int(canvas.shape[0] / 2) + 1
+        canvas[:, split:, :] = right_output[:, split:, :]
+        # Black outside the circle
+        canvas = cv2.add(canvas, np.zeros(canvas.shape, dtype=np.uint8), mask=mask)
         if flip:
-            re_render_canvas = self.__wrap(re_render_canvas, 180, scale=1)
+            canvas = _rotate_180(canvas)
+        return canvas
 
-        return re_render_canvas
+    # ---- checks ---------------------------------------------------------------------------
 
-    # =================================================================
+    def _require_fisheye(self, needed_by: str) -> np.ndarray:
+        if self.img is None:
+            raise TypeError(f'{needed_by} needs the fisheye image, but FisheyeWarping got None. '
+                            '(cv2.imread returns None when it cannot read a file.) Without an image you can '
+                            'still load both meshes and call run_rewarp_with_mesh().')
+        return self.img
+
+    def _require_dewarp_mesh(self) -> Tuple[np.ndarray, np.ndarray]:
+        if self._dewarp_map_x is None or self._dewarp_map_y is None:
+            raise MeshNotReadyError('There is no dewarp mesh yet: call build_dewarp_mesh() or load_dewarp_mesh() first.')
+        return self._dewarp_map_x, self._dewarp_map_y
+
+    def _require_rewarp_mesh(self) -> RewarpMesh:
+        if self._rewarp_map_x is None or self._rewarp_map_y is None or self._rewarp_mask is None:
+            raise MeshNotReadyError('There is no rewarp mesh yet: call build_rewarp_mesh() or load_rewarp_mesh() first.')
+        return self._rewarp_map_x, self._rewarp_map_y, self._rewarp_mask

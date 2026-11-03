@@ -56,3 +56,29 @@ def test_panorama_only_without_dewarp_mesh_explains_what_is_missing(workdir, mon
             '--panorama_img_path', './panorama.png')
     assert 'load_dewarp_mesh_path' in capsys.readouterr().out
     assert not (workdir / 'rewarp-output.png').exists()
+
+
+def test_use_multiprocessing_false_turns_it_off(workdir, monkeypatch):
+    def no_pool(*args, **kwargs):
+        raise AssertionError('multiprocessing was used although it was turned off')
+
+    monkeypatch.setattr('fisheyewarping.fisheyewarping.mp.Pool', no_pool)
+    run_cli(monkeypatch,
+            '--save_dewarp_mesh_path', './dewarp-mesh.pkl',
+            '--save_rewarp_mesh_path', './rewarp-mesh.pkl',
+            '--fisheye_img_path', './fisheye.png',
+            '--use_multiprocessing', 'False')
+    assert (workdir / 'rewarp-mesh.pkl').is_file()
+
+
+@pytest.mark.parametrize('text, expected', [
+    ('True', True), ('true', True), ('1', True), ('yes', True),
+    ('False', False), ('false', False), ('0', False), ('no', False),
+])
+def test_str2bool(text, expected):
+    assert cli.str2bool(text) is expected
+
+
+def test_use_multiprocessing_rejects_other_values(workdir, monkeypatch):
+    with pytest.raises(SystemExit):
+        run_cli(monkeypatch, '--fisheye_img_path', './fisheye.png', '--use_multiprocessing', 'maybe')

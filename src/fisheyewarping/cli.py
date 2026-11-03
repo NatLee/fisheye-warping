@@ -6,6 +6,15 @@ import cv2
 
 from fisheyewarping import FisheyeWarping
 
+def str2bool(value):
+    """Read `True`/`False` (also yes/no, 1/0, any case) as a bool; argparse `type=bool` treats any text as True."""
+    text = str(value).strip().lower()
+    if text in ('true', 'yes', 'y', '1'):
+        return True
+    if text in ('false', 'no', 'n', '0'):
+        return False
+    raise argparse.ArgumentTypeError(f'expected `True` or `False`, got `{value}`')
+
 def main():
 
     parser = argparse.ArgumentParser()
@@ -22,7 +31,7 @@ def main():
     parser.add_argument('--fisheye_img_path', type=str, default=None, help='Specific path of your fisheye image for dewarping to a panorama.')
     parser.add_argument('--panorama_img_path', type=str, default=None, help='Specific path of your panorama image for rewarping to a fisheye image.')
 
-    parser.add_argument('--use_multiprocessing', type=bool, default=True, help='Use multiprocessing to get mesh. Default is `True`.')
+    parser.add_argument('--use_multiprocessing', type=str2bool, default=True, help='Use multiprocessing to get mesh: `True` or `False`. Default is `True`.')
 
     # ---------------------------------------------------------------
 

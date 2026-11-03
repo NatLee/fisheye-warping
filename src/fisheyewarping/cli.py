@@ -218,6 +218,18 @@ def main():
             print('----- You must specify a path to `load_dewarp_mesh_path` or `save_dewarp_mesh_path`!')
             return
 
+        save_rewarp_mesh_path = args.save_rewarp_mesh_path
+        if save_rewarp_mesh_path:
+
+            # build the mesh for rewarping from the same fisheye image
+
+            if Path(save_rewarp_mesh_path).is_dir():
+                print('----- `save_rewarp_mesh_path` is a directory!')
+                return
+            print(f'----- Detect `save_rewarp_mesh_path` is {save_rewarp_mesh_path}')
+            print(f'----- We will save the mesh to `{save_rewarp_mesh_path}` when this process has been finished!')
+            frd.build_rewarp_mesh(save_path=save_rewarp_mesh_path)
+
         et = time.time()
         print(f'-------Task Completed------- ({et-st:.3f} s)')
 

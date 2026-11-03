@@ -148,8 +148,8 @@ class FisheyeWarping:
         for y in tqdm(range(0, int(h_d-1)), desc='Run dewarp job...'):
             for x in range(0, int(w_d-1)):
                 _, x_s, y_s = self._dewarp_map_job((y, x, img_details))
-                mapx.itemset((y, x), x_s)
-                mapy.itemset((y, x), y_s)
+                mapx[y, x] = x_s
+                mapy[y, x] = y_s
         return mapx, mapy
 
     def __build_dewarp_map_with_mp(self, img):
@@ -169,8 +169,8 @@ class FisheyeWarping:
         print('--------Mapping Completed-------- ({:0.3f} s)'.format(time.time() - st))
         for result in tqdm(results, desc='Mapping values to rectangle...'):
             point, x_s, y_s = result
-            mapx.itemset(point, x_s)
-            mapy.itemset(point, y_s)
+            mapx[point] = x_s
+            mapy[point] = y_s
         
         return mapx, mapy
 
@@ -221,9 +221,9 @@ class FisheyeWarping:
             if length_percentage is not None:
                 point = (y, x)
                 length = length_percentage * dewarp_result.shape[1]
-                xmap.itemset(point, length)
-                ymap.itemset(point, distance)
-                mask.itemset(point, 255)
+                xmap[point] = length
+                ymap[point] = distance
+                mask[point] = 255
         
         return xmap, ymap, mask
 
@@ -251,9 +251,9 @@ class FisheyeWarping:
             if length_percentage is not None:
                 point = (y, x)
                 length = length_percentage * dewarp_result.shape[1]
-                xmap.itemset(point, length)
-                ymap.itemset(point, distance)
-                mask.itemset(point, 255)
+                xmap[point] = length
+                ymap[point] = distance
+                mask[point] = 255
 
         return xmap, ymap, mask
 

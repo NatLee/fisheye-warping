@@ -80,13 +80,8 @@ pip install FisheyeWarping
 
 Python 3.6 or newer. This also installs OpenCV (`opencv-python`), NumPy and tqdm.
 
-> **Getting `AttributeError: ... has no attribute 'itemset'`?** Version 1.0.1, the newest release on
-> PyPI when this README was written, crashes with NumPy 2, which every new install gets. The fix is on
-> `main` but not released yet. Until it is, install from GitHub:
->
-> ```bash
-> pip install "git+https://github.com/NatLee/fisheye-warping"
-> ```
+> **Getting `AttributeError: ... has no attribute 'itemset'`?** That's version 1.0.1, which crashes with
+> NumPy 2. Upgrade: `pip install -U FisheyeWarping` (1.0.2 or newer).
 
 **Slim Docker images and servers without a desktop.** `opencv-python` needs two system libraries that
 slim images leave out; without them `import cv2` fails with `libxcb.so.1` or `libgthread-2.0.so.0`

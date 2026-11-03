@@ -219,3 +219,39 @@ def test_save_rewarp_mesh_path_that_is_a_folder_stops_after_dewarp(workdir, monk
                    '--save_rewarp_mesh_path', '.') is None
     assert 'save_rewarp_mesh_path' in capsys.readouterr().out
     assert (workdir / 'd.pkl').is_file()
+
+
+def test_options_and_defaults_are_unchanged():
+    # Scripts depend on these names and defaults; changing one is a breaking change
+    parser = cli.build_parser()
+    assert vars(parser.parse_args([])) == {
+        'fisheye_img_path': None,
+        'panorama_img_path': None,
+        'save_dewarp_mesh_path': None,
+        'save_rewarp_mesh_path': None,
+        'load_dewarp_mesh_path': None,
+        'load_rewarp_mesh_path': None,
+        'panorama_output': './dewarp-output.png',
+        'fisheye_output': './rewarp-output.png',
+        'use_multiprocessing': True,
+    }
+    help_text = parser.format_help()
+    for option in ('--fisheye_img_path', '--panorama_img_path', '--save_dewarp_mesh_path', '--save_rewarp_mesh_path',
+                   '--load_dewarp_mesh_path', '--load_rewarp_mesh_path', '--panorama_output', '--fisheye_output',
+                   '--use_multiprocessing', 'examples:'):
+        assert option in help_text
+
+
+def test_main_takes_arguments_directly(workdir, inline_pool):
+    cli.main(['--fisheye_img_path', './fisheye.png', '--save_dewarp_mesh_path', './dewarp-mesh.pkl'])
+    assert (workdir / 'dewarp-output.png').is_file()
+
+
+def test_both_images_without_a_rewarp_mesh_says_so(workdir, monkeypatch, capsys, inline_pool):
+    build_both_meshes(monkeypatch)
+    capsys.readouterr()
+    run_cli(monkeypatch,
+            '--load_dewarp_mesh_path', './dewarp-mesh.pkl',
+            '--fisheye_img_path', './fisheye.png',
+            '--panorama_img_path', './panorama.png')
+    assert 'not rewarped' in capsys.readouterr().out

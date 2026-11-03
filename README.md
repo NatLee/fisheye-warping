@@ -10,7 +10,7 @@
 
 [![PyPI pyversions](https://img.shields.io/pypi/pyversions/FisheyeWarping.svg)](https://pypi.python.org/pypi/FisheyeWarping/) [![PyPI implementation](https://img.shields.io/pypi/implementation/FisheyeWarping.svg)](https://pypi.python.org/pypi/FisheyeWarping/)
 
-[![Test](https://github.com/NatLee/fisheye-warping/actions/workflows/test.yml/badge.svg)](https://github.com/NatLee/Eagle-Wrappger/actions/workflows/test.yml) [![Release](https://github.com/NatLee/fisheye-warping/actions/workflows/release.yml/badge.svg)](https://github.com/NatLee/fisheye-warping/actions/workflows/release.yml)
+[![Test](https://github.com/NatLee/fisheye-warping/actions/workflows/test.yml/badge.svg)](https://github.com/NatLee/fisheye-warping/actions/workflows/test.yml) [![Release](https://github.com/NatLee/fisheye-warping/actions/workflows/release.yml/badge.svg)](https://github.com/NatLee/fisheye-warping/actions/workflows/release.yml)
 
 [![PyPI status](https://img.shields.io/pypi/status/FisheyeWarping.svg)](https://pypi.python.org/pypi/FisheyeWarping/) [![PyPI license](https://img.shields.io/pypi/l/FisheyeWarping.svg)](https://pypi.python.org/pypi/FisheyeWarping/)
 
@@ -30,7 +30,7 @@ A tool for dewarping and rewarping on a top-down fisheye image by using OpenCV o
 pip install FisheyeWarping
 ```
 
-Check it in [Pypi](https://pypi.org/project/FisheyeWarping/)
+Check it on [PyPI](https://pypi.org/project/FisheyeWarping/).
 
 ## Usage
 
@@ -39,10 +39,11 @@ fisheyewarping --help
 ```
 
 ```
-usage: fisheyewarping [-h] [--panorama_output PANORAMA_OUTPUT] [--fisheye_output FISHEYE_OUTPUT] [--save_dewarp_mesh_path SAVE_DEWARP_MESH_PATH] [--save_rewarp_mesh_path SAVE_REWARP_MESH_PATH] [--load_dewarp_mesh_path LOAD_DEWARP_MESH_PATH]
-                      [--load_rewarp_mesh_path LOAD_REWARP_MESH_PATH] [--fisheye_img_path FISHEYE_IMG_PATH] [--panorama_img_path PANORAMA_IMG_PATH] [--use_multiprocessing USE_MULTIPROCESSING]
+usage: fisheyewarping [-h] [--panorama_output PANORAMA_OUTPUT] [--fisheye_output FISHEYE_OUTPUT] [--save_dewarp_mesh_path SAVE_DEWARP_MESH_PATH] [--save_rewarp_mesh_path SAVE_REWARP_MESH_PATH]
+                      [--load_dewarp_mesh_path LOAD_DEWARP_MESH_PATH] [--load_rewarp_mesh_path LOAD_REWARP_MESH_PATH] [--fisheye_img_path FISHEYE_IMG_PATH] [--panorama_img_path PANORAMA_IMG_PATH]
+                      [--use_multiprocessing USE_MULTIPROCESSING]
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
   --panorama_output PANORAMA_OUTPUT
                         Specific path for `output`. Default is `./dewarp-output.png`.
@@ -61,10 +62,15 @@ optional arguments:
   --panorama_img_path PANORAMA_IMG_PATH
                         Specific path of your panorama image for rewarping to a fisheye image.
   --use_multiprocessing USE_MULTIPROCESSING
-                        Use multiprocessing to get mesh. Default is `True`.
+                        Use multiprocessing to get mesh: `True` or `False`. Default is `True`.
 ```
 
 ## Example
+
+The examples read a top-down fisheye image `./test-fisheye.jpg` and a panorama `./test-panorama.jpg` from the current folder.
+
+> [!NOTE]
+> With `use_multiprocessing=True`, building a mesh starts worker processes. In a Python script, put that code under `if __name__ == '__main__':` as the examples below do; otherwise the script stops with a `RuntimeError` on Windows, on macOS and on Python 3.14 or newer. The `fisheyewarping` command does not need this.
 
 ### Dewarp a fisheye image to panorama
 
@@ -79,10 +85,12 @@ optional arguments:
     ```python
     import cv2
     from fisheyewarping import FisheyeWarping
-    fisheye_img = cv2.imread('./test-fisheye.jpg')
-    frd = FisheyeWarping(fisheye_img, use_multiprocessing=True)
-    frd.build_dewarp_mesh(save_path='./dewarp-mesh.pkl')
-    frd.run_dewarp(save_path='./dewarp-output.png')
+
+    if __name__ == '__main__':
+        fisheye_img = cv2.imread('./test-fisheye.jpg')
+        frd = FisheyeWarping(fisheye_img, use_multiprocessing=True)
+        frd.build_dewarp_mesh(save_path='./dewarp-mesh.pkl')
+        frd.run_dewarp(save_path='./dewarp-output.png')
     ```
 
 - In the next time, you just load the mesh and feel free to go.
@@ -96,9 +104,9 @@ optional arguments:
     ```python
     import cv2
     from fisheyewarping import FisheyeWarping
-    fisheye_img = cv2.imread('./test-fisheye.jpg'.)
+    fisheye_img = cv2.imread('./test-fisheye.jpg')
     frd = FisheyeWarping(fisheye_img, use_multiprocessing=True)
-    frd.load_dewarp_mesh(save_path='./dewarp-mesh.pkl')
+    frd.load_dewarp_mesh(mesh_path='./dewarp-mesh.pkl')
     frd.run_dewarp(save_path='./dewarp-output.png')
     ```
 
@@ -116,33 +124,41 @@ optional arguments:
     ```python
     import cv2
     from fisheyewarping import FisheyeWarping
-    fisheye_img = cv2.imread('./test-fisheye.jpg'.)
-    frd = FisheyeWarping(fisheye_img, use_multiprocessing=True)
-    frd.build_dewarp_mesh(save_path='./dewarp-mesh.pkl')
-    frd.build_rewarp_mesh(save_path='./rewarp-mesh.pkl')
-    panorama_img = cv2.imread('./test-panorama.jpg'.)
-    frd.run_rewarp_with_mesh(panorama_img, save_path='./rewarp-output.png')
+
+    if __name__ == '__main__':
+        fisheye_img = cv2.imread('./test-fisheye.jpg')
+        frd = FisheyeWarping(fisheye_img, use_multiprocessing=True)
+        frd.build_dewarp_mesh(save_path='./dewarp-mesh.pkl')
+        frd.build_rewarp_mesh(save_path='./rewarp-mesh.pkl')
+        panorama_img = cv2.imread('./test-panorama.jpg')
+        frd.run_rewarp_with_mesh(panorama_img, save_path='./rewarp-output.png')
     ```
 
-- In the next time, you just load the meshes and feel free to go.
+- In the next time, you just load the meshes and feel free to go. Rewarping needs both meshes, because the dewarp mesh stores the size of the panorama.
 
     ```bash
     fisheyewarping \
     --load_dewarp_mesh_path ./dewarp-mesh.pkl \
     --load_rewarp_mesh_path ./rewarp-mesh.pkl \
-    --panorame_img_path ./test-panorama.jpg
+    --panorama_img_path ./test-panorama.jpg
     ```
 
     ```python
     import cv2
     from fisheyewarping import FisheyeWarping
     frd = FisheyeWarping(None, use_multiprocessing=True)
-    frd.load_dewarp_mesh(save_path='./dewarp-mesh.pkl')
-    frd.load_rewarp_mesh(save_path='./rewarp-mesh.pkl')
-    panorama_img = cv2.imread('./test-panorama.jpg'.)
+    frd.load_dewarp_mesh(mesh_path='./dewarp-mesh.pkl')
+    frd.load_rewarp_mesh(mesh_path='./rewarp-mesh.pkl')
+    panorama_img = cv2.imread('./test-panorama.jpg')
     frd.run_rewarp_with_mesh(panorama_img, save_path='./rewarp-output.png')
     ```
 
+## Development
+
+```bash
+pip install -e ".[test]"
+pytest
+```
 
 ## Mesh
 

@@ -64,8 +64,8 @@ def test_rewarp_formula(case):
     dv = np.abs(fisheye[..., 1] - want_v)[inner]
     # The bound adds up three known errors: up to 1 px because the left half is read from a
     # mirrored panorama, 0.5 px from storing the coordinates in 8-bit pixels, and up to 1/32 px
-    # because OpenCV blends at fixed 1/32-pixel steps (measured: 1.516 px with OpenCV 4.6 on
-    # Python 3.6, 1.500 px with OpenCV 5)
+    # because OpenCV blends at fixed 1/32-pixel steps (measured: 1.516 px with OpenCV 4.6,
+    # 1.500 px with OpenCV 5)
     mirror_px, rounding_px, blend_step_px = 1, 0.5, 1 / 32
     assert max(du.max(), dv.max()) <= mirror_px + rounding_px + blend_step_px
     assert np.all(fisheye[r > case.R + 1] == 0)  # black outside the circle

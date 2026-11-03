@@ -38,28 +38,6 @@ jobs:
         # Runs tox with the Python version on PATH
         run: tox -e py
 
-  test-old-python:
-    # GitHub's runners no longer offer Python 3.6 and 3.7, so use the official Docker images.
-    name: test (Python ${{ matrix.python }}, container)
-    runs-on: ubuntu-latest
-    container: python:${{ matrix.python }}-slim
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.6", "3.7"]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install the package with test dependencies
-        run: python -m pip install ".[test]"
-      - name: Swap in the headless OpenCV build
-        # The slim images lack the GUI libraries opencv-python loads. The headless
-        # wheel of the same version provides the same cv2 module without them.
-        run: |
-          version=$(python -m pip show opencv-python | sed -n 's/^Version: //p')
-          python -m pip install "opencv-python-headless==$version"
-      - name: Run tests
-        run: python -m pytest tests
-
   package:
     # Build the sdist and wheel the same way the release workflow does (same Python, same commands),
     # and validate the metadata.

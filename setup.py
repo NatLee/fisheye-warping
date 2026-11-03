@@ -32,8 +32,6 @@ setuptools.setup(
         'Topic :: Scientific/Engineering :: Image Processing',
 
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.6',
-        'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
@@ -46,12 +44,9 @@ setuptools.setup(
         'Operating System :: OS Independent',
         'Typing :: Typed',
     ],
-    python_requires='>=3.6',
+    python_requires='>=3.8',  # Python 3.6 and 3.7 users get 1.0.2, the last release for them
     install_requires=[
-        # OpenCV 4.7+ has no wheels for Python 3.6, so pip would try to compile it from source and fail.
-        # Remove this line together with Python 3.6 support.
-        'opencv-python<4.7; python_version < "3.7"',
-        'opencv-python; python_version >= "3.7"',
+        'opencv-python',
         'numpy',
         'tqdm',
     ],

@@ -81,7 +81,8 @@ turns images by 180° and mirrors the panorama for the left half of the circle. 
 pip install FisheyeWarping
 ```
 
-Python 3.6 or newer. This also installs OpenCV (`opencv-python`), NumPy and tqdm.
+Python 3.8 or newer. This also installs OpenCV (`opencv-python`), NumPy and tqdm. On Python 3.6
+and 3.7, `pip install FisheyeWarping` picks 1.0.2 by itself, the last release that supports them.
 
 > **Getting `AttributeError: ... has no attribute 'itemset'`?** That's version 1.0.1, which crashes with
 > NumPy 2. Upgrade: `pip install -U FisheyeWarping` (1.0.2 or newer).
@@ -266,8 +267,7 @@ pytest
 
 `tox` runs the same checks as CI: the package manifest, the package metadata and the tests. Some tests
 recompute the 1.0 formulas point by point, so any change to the output geometry shows up as a failing
-test. CI runs on Ubuntu with Python 3.8 to 3.14, on Windows and macOS with Python 3.12, and on Python 3.6
-and 3.7 in Docker containers.
+test. CI runs on Ubuntu with Python 3.8 to 3.14, and on Windows and macOS with Python 3.12.
 
 The images in this README are real output of the tool: `doc/round-trip.jpg` comes from
 `doc/101-fisheye.jpg`, and `doc/how-it-works.jpg` from a generated colour wheel.

@@ -33,7 +33,7 @@ def test_fisheye_only_builds_both_meshes(workdir, monkeypatch):
     assert (workdir / 'dewarp-output.png').is_file()
 
 
-def test_panorama_only_rewarps_with_both_loaded_meshes(workdir, monkeypatch):
+def test_panorama_only_rewarps_with_both_loaded_meshes(workdir, monkeypatch, fisheye_img):
     run_cli(monkeypatch,
             '--save_dewarp_mesh_path', './dewarp-mesh.pkl',
             '--save_rewarp_mesh_path', './rewarp-mesh.pkl',
@@ -44,7 +44,7 @@ def test_panorama_only_rewarps_with_both_loaded_meshes(workdir, monkeypatch):
             '--load_rewarp_mesh_path', './rewarp-mesh.pkl',
             '--panorama_img_path', './panorama.png')
     output = cv2.imread(str(workdir / 'rewarp-output.png'))
-    assert output.shape == (64, 64, 3)
+    assert output.shape == fisheye_img.shape  # the size the meshes were built for
 
 
 def test_panorama_only_without_dewarp_mesh_explains_what_is_missing(workdir, monkeypatch, capsys):
@@ -154,7 +154,7 @@ def test_both_images_without_a_rewarp_mesh_only_dewarp(workdir, monkeypatch, inl
     assert not (workdir / 'rewarp-output.png').exists()
 
 
-def test_output_paths_can_be_changed(workdir, monkeypatch, inline_pool):
+def test_output_paths_can_be_changed(workdir, monkeypatch, inline_pool, fisheye_img):
     build_both_meshes(monkeypatch)
     run_cli(monkeypatch,
             '--load_dewarp_mesh_path', './dewarp-mesh.pkl',
@@ -165,8 +165,9 @@ def test_output_paths_can_be_changed(workdir, monkeypatch, inline_pool):
             '--load_rewarp_mesh_path', './rewarp-mesh.pkl',
             '--panorama_img_path', './panorama.png',
             '--fisheye_output', './my-fisheye.png')
+    # A 64 x 64 fisheye gives a 100 x 32 panorama (see test_build_dewarp_mesh)
     assert cv2.imread(str(workdir / 'my-panorama.jpg')).shape == (32, 100, 3)
-    assert cv2.imread(str(workdir / 'my-fisheye.png')).shape == (64, 64, 3)
+    assert cv2.imread(str(workdir / 'my-fisheye.png')).shape == fisheye_img.shape
 
 
 # Each of these stops before writing anything and says what is wrong. The process still ends

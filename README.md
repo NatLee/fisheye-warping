@@ -34,6 +34,44 @@ meshes. `cv2.remap` then moves the pixels in milliseconds. Rewarping needs both 
 says where each fisheye pixel comes from, and the dewarp mesh holds the panorama size it expects. Any
 panorama you rewarp is resized to that size first.
 
+### The maths
+
+Take a square fisheye image *F* of *N* × *N* pixels. Its centre is (*c*, *c*) and its radius *R*,
+both *N*/2. Pixel (*x*, *y*) is column *x* and row *y*, so *x* grows to the right and *y* downwards.
+The panorama *P* is *W* × *H* pixels:
+
+```math
+W = \lfloor \pi R \rfloor, \qquad H = R
+```
+
+*W* is the length of the circle at half the radius, so the panorama keeps the scale there: it
+squeezes pixels together towards the rim and stretches them towards the centre. A 1024 × 1024 image
+gives a 1608 × 512 panorama.
+
+**Dewarp.** Column *u* of the panorama is an angle *φ*, measured clockwise from 6 o'clock, and row
+*v* is a distance *r* from the centre, counted from the rim:
+
+```math
+\varphi = \frac{2\pi u}{W}, \qquad r = R - v, \qquad
+P(u, v) = F\big(\lfloor c - r\,\sin\varphi \rfloor,\ \lfloor c + r\,\cos\varphi \rfloor\big)
+```
+
+**Rewarp** runs the same map backwards. Each fisheye pixel inside the circle works out its distance
+*r* from the centre and its clockwise angle *ψ* from 6 o'clock, and reads the panorama there. Pixels
+outside the circle stay black.
+
+```math
+r = \sqrt{(x - c)^2 + (y - c)^2}, \qquad
+\psi = \mathrm{atan2}(c - x,\ y - c) \bmod 2\pi, \qquad
+F(x, y) = P\Big(\frac{W\psi}{2\pi},\ R - r\Big) \quad \text{for } r \le R
+```
+
+Dewarping copies whole pixels (the ⌊ ⌋ rounds down). Rewarping lands between pixels, so it blends
+the four nearest ones (bilinear interpolation). The code reaches these maps in a roundabout way: it
+turns images by 180° and mirrors the panorama for the left half of the circle. The result is within
+1 pixel of the formulas, and
+[a test](https://github.com/NatLee/fisheye-warping/blob/main/tests/test_readme_formulas.py) checks that.
+
 ## Install
 
 ```bash

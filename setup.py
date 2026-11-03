@@ -38,10 +38,16 @@ setuptools.setup(
         'Operating System :: OS Independent',
     ],
     python_requires='>=3.6',
-    install_requires=['opencv-python', 'numpy', 'tqdm'],
+    install_requires=[
+        # OpenCV 4.7+ has no wheels for Python 3.6, so pip would try to compile it from source and fail
+        'opencv-python<4.7; python_version < "3.7"',
+        'opencv-python; python_version >= "3.7"',
+        'numpy',
+        'tqdm',
+    ],
     extras_require={
         'dev': ['check-manifest'],
-        # 'test': ['coverage'],
+        'test': ['pytest'],
     },
     entry_points={
         'console_scripts': [

@@ -57,6 +57,8 @@ def test_rewarp_formula(warper):
     inner = (r >= 2) & (r <= R - 2) & (np.minimum(want_u, W - want_u) >= 3)
     du = np.abs(fisheye[..., 0] - want_u)[inner]
     dv = np.abs(fisheye[..., 1] - want_v)[inner]
-    # Up to 1 px because the left half is read from a mirrored panorama, plus 0.5 px from 8-bit rounding
-    assert max(du.max(), dv.max()) <= 1.5
+    # Up to 1 px because the left half is read from a mirrored panorama, plus 0.5 px from 8-bit
+    # rounding, plus up to 1/32 px because older OpenCV blends at fixed 1/32-pixel steps
+    # (1.516 px with Python 3.6, 1.500 px with OpenCV 5)
+    assert max(du.max(), dv.max()) <= 1.6
     assert np.all(fisheye[r > R + 1] == 0)  # black outside the circle

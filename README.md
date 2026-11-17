@@ -10,7 +10,7 @@
 [![License: MIT](https://img.shields.io/pypi/l/FisheyeWarping.svg)](LICENSE)
 [![Downloads](https://img.shields.io/pypi/dm/FisheyeWarping.svg)](https://pypi.org/project/FisheyeWarping/)
 
-<img src="doc/round-trip.jpg" alt="A tiny-planet fisheye photo of the Taipei skyline is dewarped into a 1608 × 512 panorama, and the panorama is rewarped back into the same fisheye image" width="100%">
+<img src="docs/images/round-trip.jpg" alt="A tiny-planet fisheye photo of the Taipei skyline is dewarped into a 1608 × 512 panorama, and the panorama is rewarped back into the same fisheye image" width="100%">
 
 </div>
 
@@ -22,7 +22,7 @@ size takes a fraction of a second.
 
 ## How it works
 
-<img src="doc/how-it-works.jpg" alt="A colour wheel with rings is dewarped into a panorama: each colour sector becomes a vertical band, each ring a horizontal line" width="100%">
+<img src="docs/images/how-it-works.jpg" alt="A colour wheel with rings is dewarped into a panorama: each colour sector becomes a vertical band, each ring a horizontal line" width="100%">
 
 Read the fisheye image like a clock face. Dewarping uses polar coordinates: the angle around the centre
 becomes the horizontal axis, and the distance from the centre becomes the vertical axis. The panorama
@@ -113,7 +113,7 @@ expected. Use `--no-deps` again when you upgrade FisheyeWarping.
 
 The examples use a top-down fisheye image `fisheye.jpg` and a panorama `panorama.jpg` in the
 current folder. To try it with the photo above, scale
-[`doc/101-fisheye.jpg`](doc/101-fisheye.jpg) down to
+[`docs/images/101-fisheye.jpg`](docs/images/101-fisheye.jpg) down to
 1024 × 1024 first (the Mesh files section explains why).
 
 ### Command line
@@ -283,8 +283,8 @@ pytest
 recompute the 1.0 formulas point by point, so any change to the output geometry shows up as a failing
 test. CI runs on Ubuntu with Python 3.8 to 3.14, and on Windows and macOS with Python 3.12.
 
-The images in this README are real output of the tool: `doc/round-trip.jpg` comes from
-`doc/101-fisheye.jpg`, and `doc/how-it-works.jpg` from a generated colour wheel.
+The images in this README are real output of the tool: `docs/images/round-trip.jpg` comes from
+`docs/images/101-fisheye.jpg`, and `docs/images/how-it-works.jpg` from a generated colour wheel.
 
 ## Contributors
 

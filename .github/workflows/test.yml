@@ -17,7 +17,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
+        # A fixed image, not ubuntu-latest: setup-python only has each Python for the images that were
+        # current while that Python was supported, and ubuntu-latest moved to 26.04 in October 2026,
+        # which has no 3.8 or 3.9. Move this on when GitHub retires 24.04.
+        os: [ubuntu-24.04]
         python: ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
         include:
           # The package says it is OS independent, and multiprocessing starts

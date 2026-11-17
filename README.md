@@ -7,10 +7,10 @@
 [![PyPI](https://img.shields.io/pypi/v/FisheyeWarping.svg)](https://pypi.org/project/FisheyeWarping/)
 [![Python versions](https://img.shields.io/pypi/pyversions/FisheyeWarping.svg)](https://pypi.org/project/FisheyeWarping/)
 [![Test](https://github.com/NatLee/fisheye-warping/actions/workflows/test.yml/badge.svg)](https://github.com/NatLee/fisheye-warping/actions/workflows/test.yml)
-[![License: MIT](https://img.shields.io/pypi/l/FisheyeWarping.svg)](https://github.com/NatLee/fisheye-warping/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/pypi/l/FisheyeWarping.svg)](LICENSE)
 [![Downloads](https://img.shields.io/pypi/dm/FisheyeWarping.svg)](https://pypi.org/project/FisheyeWarping/)
 
-<img src="https://github.com/NatLee/fisheye-warping/raw/main/doc/round-trip.jpg" alt="A tiny-planet fisheye photo of the Taipei skyline is dewarped into a 1608 × 512 panorama, and the panorama is rewarped back into the same fisheye image" width="100%">
+<img src="docs/images/round-trip.jpg" alt="A tiny-planet fisheye photo of the Taipei skyline is dewarped into a 1608 × 512 panorama, and the panorama is rewarped back into the same fisheye image" width="100%">
 
 </div>
 
@@ -22,7 +22,7 @@ size takes a fraction of a second.
 
 ## How it works
 
-<img src="https://github.com/NatLee/fisheye-warping/raw/main/doc/how-it-works.jpg" alt="A colour wheel with rings is dewarped into a panorama: each colour sector becomes a vertical band, each ring a horizontal line" width="100%">
+<img src="docs/images/how-it-works.jpg" alt="A colour wheel with rings is dewarped into a panorama: each colour sector becomes a vertical band, each ring a horizontal line" width="100%">
 
 Read the fisheye image like a clock face. Dewarping uses polar coordinates: the angle around the centre
 becomes the horizontal axis, and the distance from the centre becomes the vertical axis. The panorama
@@ -73,7 +73,7 @@ Dewarping copies whole pixels (the ⌊ ⌋ rounds down). Rewarping lands between
 the four nearest ones (bilinear interpolation). The code reaches these maps in a roundabout way: it
 turns images by 180° and mirrors the panorama for the left half of the circle. The result is within
 1 pixel of the formulas, and
-[a test](https://github.com/NatLee/fisheye-warping/blob/main/tests/test_readme_formulas.py) checks that.
+[a test](tests/test_readme_formulas.py) checks that.
 
 ## Install
 
@@ -113,7 +113,7 @@ expected. Use `--no-deps` again when you upgrade FisheyeWarping.
 
 The examples use a top-down fisheye image `fisheye.jpg` and a panorama `panorama.jpg` in the
 current folder. To try it with the photo above, scale
-[`doc/101-fisheye.jpg`](https://github.com/NatLee/fisheye-warping/blob/main/doc/101-fisheye.jpg) down to
+[`docs/images/101-fisheye.jpg`](docs/images/101-fisheye.jpg) down to
 1024 × 1024 first (the Mesh files section explains why).
 
 ### Command line
@@ -283,8 +283,8 @@ pytest
 recompute the 1.0 formulas point by point, so any change to the output geometry shows up as a failing
 test. CI runs on Ubuntu with Python 3.8 to 3.14, and on Windows and macOS with Python 3.12.
 
-The images in this README are real output of the tool: `doc/round-trip.jpg` comes from
-`doc/101-fisheye.jpg`, and `doc/how-it-works.jpg` from a generated colour wheel.
+The images in this README are real output of the tool: `docs/images/round-trip.jpg` comes from
+`docs/images/101-fisheye.jpg`, and `docs/images/how-it-works.jpg` from a generated colour wheel.
 
 ## Contributors
 
@@ -306,4 +306,4 @@ The images in this README are real output of the tool: `doc/round-trip.jpg` come
 
 ## License
 
-[MIT](https://github.com/NatLee/fisheye-warping/blob/main/LICENSE)
+[MIT](LICENSE)

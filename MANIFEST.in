@@ -5,5 +5,5 @@ include *.bat
 include LICENSE
 include src/fisheyewarping/py.typed
 recursive-include tests *.py
-recursive-include doc *.png
-recursive-include doc *.jpg
+recursive-include docs/images *.png
+recursive-include docs/images *.jpg
